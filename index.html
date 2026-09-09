@@ -185,6 +185,9 @@
   .modal .desc{ color:var(--muted); font-size:12.5px; margin-bottom:16px; }
   .field{ margin-bottom:12px; }
   .field label{ display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .checkbox-field{ display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+  .checkbox-field input[type="checkbox"]{ width:15px; height:15px; accent-color:var(--amber); cursor:pointer; }
+  .checkbox-field label{ margin:0; font-size:13px; color:var(--text); cursor:pointer; }
   .field input, .field select, .field textarea{
     width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text);
     padding:8px 10px; border-radius:6px; font-size:13px; font-family:var(--sans);
@@ -882,6 +885,7 @@ function renderReview(){
 function openResolve(row){
   const item = dataCache.review.find(r=>r.row===row);
   resolveTechnologyAutoLock = false;
+  resolveRegionAutoLock = false;
   const resourceIds = [...new Set([...dataCache.plants.map(p=>p.resourceId), ...Object.keys(dataCache.technology||{})].filter(Boolean))].sort();
   $('#modalBody').innerHTML = `
     <h2>Resolve to outage record</h2>
@@ -904,17 +908,54 @@ function openResolve(row){
       <div class="field"><label>Date out</label><input type="datetime-local" lang="en-GB" id="r_dateOut"></div>
       <div class="field"><label>Date in</label><input type="datetime-local" lang="en-GB" id="r_dateIn"></div>
     </div>
+    <div class="checkbox-field">
+      <input type="checkbox" id="r_addToMapping" checked onchange="toggleResolveMappingFields()">
+      <label for="r_addToMapping">Also add this alias to Plant Mapping</label>
+    </div>
+    <div class="row2" id="r_mappingFields">
+      <div class="field"><label>Capacity (MW)</label><input id="r_capacity" type="number" step="0.1"></div>
+      <div class="field"><label>Region</label>
+        <select id="r_region" onchange="resolveRegionAutoLock=true">
+          <option value="">Select region</option>
+          <option value="LUZON">LUZON</option>
+          <option value="VISAYAS">VISAYAS</option>
+          <option value="MINDANAO">MINDANAO</option>
+        </select>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitResolve(${row})">Resolve</button>
     </div>`;
   $('#overlay').classList.add('show');
 }
+function toggleResolveMappingFields(){
+  $('#r_mappingFields').style.display = $('#r_addToMapping').checked ? 'grid' : 'none';
+}
 let resolveTechnologyAutoLock = false;
+let resolveRegionAutoLock = false;
 function autofillResolveTechnology(val){
-  if(resolveTechnologyAutoLock) return;
-  const tech = technologyByUpper[val.trim().toUpperCase()];
-  if(tech) $('#r_technology').value = tech;
+  const trimmed = val.trim();
+  if(!resolveTechnologyAutoLock){
+    const tech = technologyByUpper[trimmed.toUpperCase()];
+    if(tech) $('#r_technology').value = tech;
+  }
+  if(!resolveRegionAutoLock){
+    const exact = dataCache.plants.find(p => (p.resourceId||'').toUpperCase() === trimmed.toUpperCase());
+    if(exact && exact.region){
+      $('#r_region').value = exact.region;
+    }else{
+      const m = trimmed.match(/^(\d{1,2})/);
+      if(m){
+        const n = parseInt(m[1], 10);
+        let region = '';
+        if(n >= 1 && n <= 3) region = 'LUZON';
+        else if(n >= 4 && n <= 8) region = 'VISAYAS';
+        else if(n >= 9) region = 'MINDANAO';
+        if(region) $('#r_region').value = region;
+      }
+    }
+  }
 }
 async function submitResolve(row){
   const item = dataCache.review.find(r=>r.row===row);
@@ -928,6 +969,16 @@ async function submitResolve(row){
   if(!data.plantAlias || !data.resourceId){ toast('Plant alias and Resource ID are required', 'error'); return; }
   try{
     await apiPost('resolveReview', { reviewRow: row, data });
+    if($('#r_addToMapping').checked){
+      const aliasNorm = data.plantAlias.trim().toLowerCase();
+      const alreadyMapped = dataCache.plants.some(p => (p.alias||'').trim().toLowerCase() === aliasNorm);
+      if(!alreadyMapped){
+        await apiPost('addPlant', { data: {
+          alias: data.plantAlias, resourceId: data.resourceId,
+          capacity: $('#r_capacity').value, region: $('#r_region').value
+        }});
+      }
+    }
     closeModal();
     toast('Resolved and added to Outage Database', 'success');
     await refreshAll();
