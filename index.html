@@ -75,6 +75,12 @@
   .conn.error .dot{ background:var(--red); }
   @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:.4;} }
   .conn a{ color:var(--amber); cursor:pointer; text-decoration:none; }
+  .ext-links{ display:flex; gap:8px; padding:0 16px 10px; }
+  .ext-links a{
+    flex:1; text-align:center; padding:7px 8px; border:1px solid var(--line); border-radius:6px;
+    color:var(--muted); font-size:11px; text-decoration:none; transition:border-color .15s ease, color .15s ease;
+  }
+  .ext-links a:hover{ border-color:var(--amber); color:var(--amber); }
 
   /* ---------- Main ---------- */
   .main{ flex:1; display:flex; flex-direction:column; min-width:0; }
@@ -235,6 +241,10 @@
     <button data-view="outages" class="active">Outages <span class="count" id="countOutages">–</span></button>
     <button data-view="plants">Plant Mapping <span class="count" id="countPlants">–</span></button>
     <button data-view="review">Needs Review <span class="count" id="countReview">–</span></button>
+  </div>
+  <div class="ext-links">
+    <a href="https://colab.research.google.com/drive/1eLi0cBBBVELiiwK3N4DSAMVGZDWfOnmY" target="_blank" rel="noopener">SO Extractor</a>
+    <a href="https://docs.google.com/spreadsheets/d/1g9ov9yH4QARlaqeSw2WrK7QWuxXSzBYzIVNXsCDlMpU/edit?usp=sharing" target="_blank" rel="noopener">DB Sheets</a>
   </div>
   <div class="conn" id="connStatus">
     <span class="dot"></span><span id="connText">Not connected</span><br>
