@@ -354,7 +354,9 @@ function closeModal(){
   modal.style.top = '';
   modal.style.margin = '';
 }
-$('#overlay').addEventListener('click', e => { if(e.target.id === 'overlay') closeModal(); });
+// Click-outside-to-close was removed: it conflicted with native date/time
+// pickers (a picker dismissal click landing on the backdrop would close
+// the whole modal). Every modal has a Cancel button, and Escape still works.
 
 // ---------- draggable modal ----------
 // Drag by the title (h2) to reposition the modal anywhere on screen —
