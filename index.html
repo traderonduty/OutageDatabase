@@ -886,6 +886,7 @@ function openResolve(row){
   const item = dataCache.review.find(r=>r.row===row);
   resolveTechnologyAutoLock = false;
   resolveRegionAutoLock = false;
+  resolveCapacityAutoLock = false;
   const resourceIds = [...new Set([...dataCache.plants.map(p=>p.resourceId), ...Object.keys(dataCache.technology||{})].filter(Boolean))].sort();
   $('#modalBody').innerHTML = `
     <h2>Resolve to outage record</h2>
@@ -913,7 +914,7 @@ function openResolve(row){
       <label for="r_addToMapping">Also add this alias to Plant Mapping</label>
     </div>
     <div class="row2" id="r_mappingFields">
-      <div class="field"><label>Capacity (MW)</label><input id="r_capacity" type="number" step="0.1"></div>
+      <div class="field"><label>Capacity (MW)</label><input id="r_capacity" type="number" step="0.1" oninput="resolveCapacityAutoLock=true"></div>
       <div class="field"><label>Region</label>
         <select id="r_region" onchange="resolveRegionAutoLock=true">
           <option value="">Select region</option>
@@ -934,14 +935,15 @@ function toggleResolveMappingFields(){
 }
 let resolveTechnologyAutoLock = false;
 let resolveRegionAutoLock = false;
+let resolveCapacityAutoLock = false;
 function autofillResolveTechnology(val){
   const trimmed = val.trim();
   if(!resolveTechnologyAutoLock){
     const tech = technologyByUpper[trimmed.toUpperCase()];
     if(tech) $('#r_technology').value = tech;
   }
+  const exact = dataCache.plants.find(p => (p.resourceId||'').toUpperCase() === trimmed.toUpperCase());
   if(!resolveRegionAutoLock){
-    const exact = dataCache.plants.find(p => (p.resourceId||'').toUpperCase() === trimmed.toUpperCase());
     if(exact && exact.region){
       $('#r_region').value = exact.region;
     }else{
@@ -955,6 +957,9 @@ function autofillResolveTechnology(val){
         if(region) $('#r_region').value = region;
       }
     }
+  }
+  if(!resolveCapacityAutoLock && exact && exact.capacity !== '' && exact.capacity != null){
+    $('#r_capacity').value = exact.capacity;
   }
 }
 async function submitResolve(row){
