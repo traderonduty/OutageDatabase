@@ -67,6 +67,7 @@
   }
   .nav button.active .count{ color:var(--amber); }
   .conn{ padding:14px 16px; border-top:1px solid var(--line); font-size:11.5px; }
+  .last-refreshed{ color:var(--muted); font-size:10.5px; margin-left:4px; }
   .conn .dot{
     width:7px; height:7px; border-radius:50%; display:inline-block; margin-right:6px;
     background:var(--muted);
@@ -81,6 +82,10 @@
     color:var(--muted); font-size:11px; text-decoration:none; transition:border-color .15s ease, color .15s ease;
   }
   .ext-links a:hover{ border-color:var(--amber); color:var(--amber); }
+  .pagination{ display:flex; align-items:center; justify-content:center; gap:14px; padding:16px; }
+  .page-indicator{ font-size:12px; color:var(--muted); }
+  .ongoing-days{ font-size:10px; color:var(--muted); margin-left:5px; }
+  .ongoing-days.stale{ color:var(--red); font-weight:600; }
 
   /* ---------- Main ---------- */
   .main{ flex:1; display:flex; flex-direction:column; min-width:0; }
@@ -247,7 +252,8 @@
     <a href="https://docs.google.com/spreadsheets/d/1g9ov9yH4QARlaqeSw2WrK7QWuxXSzBYzIVNXsCDlMpU/edit?usp=sharing" target="_blank" rel="noopener">DB Sheets</a>
   </div>
   <div class="conn" id="connStatus">
-    <span class="dot"></span><span id="connText">Not connected</span><br>
+    <span class="dot"></span><span id="connText">Not connected</span>
+    <span id="lastRefreshedText" class="last-refreshed"></span><br>
     <a id="settingsLink">Set Web App URL</a>
   </div>
 </div>
@@ -295,6 +301,7 @@ let sortState = {
   plants:  { field:null, dir:'asc'  },
   review:  { field:null, dir:'asc' }
 };
+let lastRefreshedAt = null;
 
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
@@ -499,6 +506,8 @@ async function refreshAll(){
     $('#countOutages').textContent = outages.length;
     $('#countPlants').textContent = plants.length;
     $('#countReview').textContent = review.length;
+    lastRefreshedAt = Date.now();
+    updateLastRefreshedText();
     render();
   }catch(e){
     setConnStatus('error', e.message);
@@ -521,6 +530,7 @@ $$('.nav button').forEach(btn => btn.onclick = () => {
 $('#searchBox').addEventListener('input', e => {
   searchTerm = e.target.value.toLowerCase();
   $('.search-wrap').classList.toggle('has-text', e.target.value.length > 0);
+  currentPage[currentView] = 1;
   render();
 });
 function clearSearch(){
@@ -529,9 +539,33 @@ function clearSearch(){
   searchTerm = '';
   $('.search-wrap').classList.remove('has-text');
   box.focus();
+  currentPage[currentView] = 1;
   render();
 }
-$('#filterSelect').addEventListener('change', e => { filterValue = e.target.value; render(); });
+$('#filterSelect').addEventListener('change', e => { filterValue = e.target.value; currentPage[currentView] = 1; render(); });
+
+// ---------- pagination ----------
+const PAGE_SIZE = 50;
+let currentPage = { outages: 1, plants: 1, review: 1 };
+function paginate(view, rows){
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if(currentPage[view] > totalPages) currentPage[view] = totalPages;
+  if(currentPage[view] < 1) currentPage[view] = 1;
+  const start = (currentPage[view]-1)*PAGE_SIZE;
+  return { pageRows: rows.slice(start, start+PAGE_SIZE), totalPages, page: currentPage[view] };
+}
+function goToPage(view, page){
+  currentPage[view] = page;
+  render();
+}
+function paginationControls(view, page, totalPages){
+  if(totalPages <= 1) return '';
+  return `<div class="pagination">
+    <button class="btn ghost" ${page<=1?'disabled':''} onclick="goToPage('${view}',${page-1})">‹ Prev</button>
+    <span class="page-indicator">Page ${page} of ${totalPages}</span>
+    <button class="btn ghost" ${page>=totalPages?'disabled':''} onclick="goToPage('${view}',${page+1})">Next ›</button>
+  </div>`;
+}
 
 // ---------- sorting ----------
 function compareValues(a, b, dir){
@@ -553,6 +587,7 @@ function toggleSort(view, field){
     s.field = field;
     s.dir = ['date','dateOut','dateIn','timeMessage'].includes(field) ? 'desc' : 'asc';
   }
+  currentPage[view] = 1;
   render();
 }
 function thSort(view, field, label){
@@ -616,27 +651,41 @@ function getCurrentOutageRows(){
 }
 function renderOutages(){
   $('#viewTitle').textContent = 'Outage Database';
-  $('#viewMeta').textContent = `${dataCache.outages.length} outage records`;
-  $('#viewActions').innerHTML = `<button class="btn ghost" onclick="exportCSV('outages')">Export CSV</button><button class="btn primary" onclick="openAddOutage()">Add record</button>`;
-  $('#toolbar').style.display='flex';
   const sel = $('#filterSelect');
   sel.innerHTML = `<option value="">All statuses</option><option>Ongoing</option><option>Restored</option>`;
   sel.value = filterValue;
 
   let rows = getCurrentOutageRows();
+  const isFiltered = !!(searchTerm || filterValue);
+  $('#viewMeta').textContent = isFiltered
+    ? `${rows.length} of ${dataCache.outages.length} outage records`
+    : `${dataCache.outages.length} outage records`;
+  $('#viewActions').innerHTML = `<button class="btn ghost" onclick="exportCSV('outages')">Export CSV</button><button class="btn primary" onclick="openAddOutage()">Add record</button>`;
+  $('#toolbar').style.display='flex';
+
   if(!rows.length){ $('#content').innerHTML = emptyState('No records match.'); return; }
+
+  const { pageRows, totalPages, page } = paginate('outages', rows);
 
   $('#content').innerHTML = `<table>
     <thead><tr>
       ${thSort('outages','month','Month')}${thSort('outages','date','Date')}${thSort('outages','plantAlias','Plant Alias')}${thSort('outages','resourceId','Resource ID')}${thSort('outages','technology','Technology')}${thSort('outages','outageType','Outage Type')}${thSort('outages','category','Category')}${thSort('outages','dateOut','Date Out')}${thSort('outages','dateIn','Date In')}${thSort('outages','status','Status')}${thSort('outages','soAdvisory','SO Advisory')}<th></th>
     </tr></thead>
-    <tbody>${rows.map(r => outageRow(r)).join('')}</tbody>
-  </table>`;
+    <tbody>${pageRows.map(r => outageRow(r)).join('')}</tbody>
+  </table>${paginationControls('outages', page, totalPages)}`;
 }
 
 function outageRow(r){
   const statusClass = r.status === 'Ongoing' ? 'ongoing' : 'restored';
   const typeClass = r.outageType === 'Planned' ? 'planned' : 'unplanned';
+  let ongoingDaysHtml = '';
+  if(r.status === 'Ongoing' && r.dateOut){
+    const days = Math.floor((Date.now() - new Date(r.dateOut).getTime()) / 86400000);
+    if(days >= 0){
+      const staleThreshold = 14;
+      ongoingDaysHtml = `<span class="ongoing-days${days>=staleThreshold?' stale':''}" title="${days} day${days===1?'':'s'} since Date Out">${days}d</span>`;
+    }
+  }
   return `<tr>
     <td>${esc(r.month)}</td>
     <td>${fmt(r.date)}</td>
@@ -647,7 +696,7 @@ function outageRow(r){
     <td class="editable" onclick="editCell(this,'outages',${r.row},'category','${esc(r.category)}')">${esc(r.category)||'—'}</td>
     <td class="mono editable" onclick="editDateCell(this,${r.row},'dateOut','${r.dateOut}')">${fmt(r.dateOut)}</td>
     <td class="mono editable" onclick="editDateCell(this,${r.row},'dateIn','${r.dateIn}')">${fmt(r.dateIn)}</td>
-    <td class="editable" onclick="editStatusCell(this,${r.row},'${esc(r.status)}')"><span class="badge ${statusClass}">${r.status}</span></td>
+    <td class="editable" onclick="editStatusCell(this,${r.row},'${esc(r.status)}')"><span class="badge ${statusClass}">${r.status}</span>${ongoingDaysHtml}</td>
     <td class="msg-cell">${esc(r.soAdvisory)}</td>
     <td><button class="btn ghost" onclick="openAddOutage(${r.row})">Edit</button></td>
   </tr>`;
@@ -768,9 +817,6 @@ function getCurrentPlantRows(){
 }
 function renderPlants(){
   $('#viewTitle').textContent = 'Plant Mapping';
-  $('#viewMeta').textContent = `${dataCache.plants.length} registered aliases`;
-  $('#viewActions').innerHTML = `<button class="btn ghost" onclick="exportCSV('plants')">Export CSV</button><button class="btn primary" onclick="openAddPlant()">Add plant</button>`;
-  $('#toolbar').style.display='flex';
   const regionOrder = ['LUZON', 'VISAYAS', 'MINDANAO'];
   const presentRegions = new Set(dataCache.plants.map(p=>p.region).filter(Boolean));
   const orderedRegions = [
@@ -782,17 +828,53 @@ function renderPlants(){
   $('#filterSelect').value = filterValue;
 
   let rows = getCurrentPlantRows();
+  const isFiltered = !!(searchTerm || filterValue);
+  $('#viewMeta').textContent = isFiltered
+    ? `${rows.length} of ${dataCache.plants.length} registered aliases`
+    : `${dataCache.plants.length} registered aliases`;
+  $('#viewActions').innerHTML = `<button class="btn ghost" onclick="exportCSV('plants')">Export CSV</button><button class="btn primary" onclick="openAddPlant()">Add plant</button>`;
+  $('#toolbar').style.display='flex';
+
   if(!rows.length){ $('#content').innerHTML = emptyState('No plants match.'); return; }
+
+  const { pageRows, totalPages, page } = paginate('plants', rows);
+  const resourceIds = [...new Set([...dataCache.plants.map(p=>p.resourceId), ...Object.keys(dataCache.technology||{})].filter(Boolean))].sort();
 
   $('#content').innerHTML = `<table>
     <thead><tr>${thSort('plants','alias','Alias (as in SO Advisory)')}${thSort('plants','resourceId','Resource ID')}${thSort('plants','capacity','Capacity (MW)')}${thSort('plants','region','Region')}</tr></thead>
-    <tbody>${rows.map(p=>`<tr>
-      <td>${esc(p.alias)}</td>
-      <td class="mono">${esc(p.resourceId)}</td>
-      <td class="mono">${p.capacity||'—'}</td>
-      <td>${esc(p.region)||'—'}</td>
+    <tbody>${pageRows.map(p=>`<tr>
+      <td class="editable" onclick="editPlantCell(this,${p.row},'alias','${esc(p.alias)}')">${esc(p.alias)}</td>
+      <td class="mono editable" onclick="editPlantCell(this,${p.row},'resourceId','${esc(p.resourceId)}')">${esc(p.resourceId)}</td>
+      <td class="mono editable" onclick="editPlantCell(this,${p.row},'capacity','${esc(p.capacity)}')">${p.capacity||'—'}</td>
+      <td class="editable" onclick="editPlantCell(this,${p.row},'region','${esc(p.region)}')">${esc(p.region)||'—'}</td>
     </tr>`).join('')}</tbody>
-  </table>`;
+  </table>
+  <datalist id="plantEditResourceIdList">${resourceIds.map(id=>`<option value="${esc(id)}">`).join('')}</datalist>
+  ${paginationControls('plants', page, totalPages)}`;
+}
+function editPlantCell(el, row, field, current){
+  if(field === 'region'){
+    el.innerHTML = `<select onblur="commitPlantEdit(this,${row},'region')" onchange="this.blur()">
+      <option value="">Select region</option>
+      ${['LUZON','VISAYAS','MINDANAO'].map(r=>`<option ${r===current?'selected':''}>${r}</option>`).join('')}
+    </select>`;
+    el.querySelector('select').focus();
+    return;
+  }
+  const isResourceId = field === 'resourceId';
+  const type = field === 'capacity' ? 'number' : 'text';
+  const step = field === 'capacity' ? ' step="0.1"' : '';
+  const listAttr = isResourceId ? ' list="plantEditResourceIdList"' : '';
+  el.innerHTML = `<input class="${isResourceId?'mono':''}" type="${type}"${step}${listAttr} value="${esc(current)}" onblur="commitPlantEdit(this,${row},'${field}')" onkeydown="if(event.key==='Enter')this.blur()">`;
+  el.querySelector('input').focus();
+}
+async function commitPlantEdit(input, row, field){
+  const value = input.value;
+  try{
+    await apiPost('updatePlant', { row, data:{ [field]: value } });
+    toast('Saved', 'success');
+    await refreshAll();
+  }catch(e){ toast('Save failed: ' + e.message, 'error'); }
 }
 function openAddPlant(){
   const resourceIds = [...new Set([...dataCache.plants.map(p=>p.resourceId), ...Object.keys(dataCache.technology||{})].filter(Boolean))].sort();
@@ -871,13 +953,17 @@ function getCurrentReviewRows(){
 }
 function renderReview(){
   $('#viewTitle').textContent = 'Needs Review';
-  $('#viewMeta').textContent = `${dataCache.review.length} advisories awaiting resolution`;
-  $('#viewActions').innerHTML = `<button class="btn ghost" onclick="exportCSV('review')">Export CSV</button><button class="btn primary" onclick="openAddPlant()">Add Plant Mapping</button><button class="btn primary" onclick="openAddOutage()">Add record</button>`;
-  $('#toolbar').style.display='flex';
   $('#filterSelect').innerHTML = `<option value="">All reasons</option><option value="Ambiguous">Ambiguous alias</option><option value="missing">Possibly missing plant</option>`;
   $('#filterSelect').value = filterValue;
 
   let rows = getCurrentReviewRows();
+  const isFiltered = !!(searchTerm || filterValue);
+  $('#viewMeta').textContent = isFiltered
+    ? `${rows.length} of ${dataCache.review.length} advisories awaiting resolution`
+    : `${dataCache.review.length} advisories awaiting resolution`;
+  $('#viewActions').innerHTML = `<button class="btn ghost" onclick="exportCSV('review')">Export CSV</button><button class="btn primary" onclick="openAddPlant()">Add Plant Mapping</button><button class="btn primary" onclick="openAddOutage()">Add record</button>`;
+  $('#toolbar').style.display='flex';
+
   if(!rows.length){ $('#content').innerHTML = emptyState('Nothing needs review right now.'); return; }
 
   $('#content').innerHTML = `<table>
@@ -1011,6 +1097,20 @@ function fmt(iso){
   if(isNaN(d)) return iso;
   return d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
 }
+
+function updateLastRefreshedText(){
+  const el = $('#lastRefreshedText');
+  if(!el) return;
+  if(!lastRefreshedAt){ el.textContent = ''; return; }
+  const secs = Math.floor((Date.now() - lastRefreshedAt) / 1000);
+  let label;
+  if(secs < 10) label = 'just now';
+  else if(secs < 60) label = `${secs}s ago`;
+  else if(secs < 3600) label = `${Math.floor(secs/60)}m ago`;
+  else label = `${Math.floor(secs/3600)}h ago`;
+  el.textContent = `· Updated ${label}`;
+}
+setInterval(updateLastRefreshedText, 15000);
 
 loadSettings();
 </script>
