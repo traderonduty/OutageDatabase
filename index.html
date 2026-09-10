@@ -160,6 +160,13 @@
   }
   .copy-btn:hover{ opacity:1; border-color:var(--amber); color:var(--amber); }
   .copy-btn svg{ width:11px; height:11px; }
+  .copy-table-wrap{ max-height:340px; overflow-y:auto; border:1px solid var(--line); border-radius:6px; margin-bottom:16px; }
+  .copy-preview-table{ width:100%; border-collapse:collapse; font-size:12px; }
+  .copy-preview-table th{
+    position:sticky; top:0; background:var(--surface); text-align:left; padding:7px 12px;
+    color:var(--muted); font-weight:600; border-bottom:1px solid var(--line);
+  }
+  .copy-preview-table td{ padding:5px 12px; border-bottom:1px solid var(--line); }
   th.sortable{ cursor:pointer; user-select:none; }
   th.sortable:hover{ color:var(--text); }
   .sort-arrow{ margin-left:4px; color:var(--amber); font-size:10px; }
@@ -640,6 +647,40 @@ function render(){
 }
 
 // ================= OUTAGES =================
+let _resourceIdCopyRows = [];
+function openResourceIdCopyModal(){
+  const rows = getCurrentOutageRows(); // same search+filter+sort as what's on screen, full set (not paginated)
+  _resourceIdCopyRows = rows.map(r => [r.resourceId || '', r.outageType || '']);
+  const statusLabel = filterValue || 'All statuses';
+  $('#modalBody').innerHTML = `
+    <h2>Resource ID &amp; Outage Type</h2>
+    <div class="desc">${rows.length} row(s) — ${esc(statusLabel)}${searchTerm ? ' · search filter active' : ''}. Copy, then paste directly into Excel.</div>
+    <div class="copy-table-wrap">
+      <table class="copy-preview-table">
+        <thead><tr><th>Resource_ID</th><th>Outage_Type</th></tr></thead>
+        <tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.resourceId)}</td><td>${esc(r.outageType)||'—'}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Close</button>
+      <button class="btn primary" onclick="copyResourceIdTable(this)">Copy</button>
+    </div>`;
+  $('#overlay').classList.add('show');
+}
+function copyResourceIdTable(btn){
+  const lines = ['Resource_ID\tOutage_Type', ..._resourceIdCopyRows.map(r => r.join('\t'))];
+  const text = lines.join('\n');
+  const done = () => {
+    const original = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(()=>{ btn.textContent = original; }, 1200);
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=> fallbackCopy(text, done));
+  }else{
+    fallbackCopy(text, done);
+  }
+}
 function getCurrentOutageRows(){
   let rows = dataCache.outages;
   if(searchTerm) rows = rows.filter(r => (r.plantAlias+r.resourceId+r.soAdvisory).toLowerCase().includes(searchTerm));
@@ -660,7 +701,7 @@ function renderOutages(){
   $('#viewMeta').textContent = isFiltered
     ? `${rows.length} of ${dataCache.outages.length} outage records`
     : `${dataCache.outages.length} outage records`;
-  $('#viewActions').innerHTML = `<button class="btn ghost" onclick="exportCSV('outages')">Export CSV</button><button class="btn primary" onclick="openAddOutage()">Add record</button>`;
+  $('#viewActions').innerHTML = `<button class="btn primary" onclick="openResourceIdCopyModal()">Copy ID &amp; Outage</button><button class="btn primary" onclick="openAddOutage()">Add record</button>`;
   $('#toolbar').style.display='flex';
 
   if(!rows.length){ $('#content').innerHTML = emptyState('No records match.'); return; }
