@@ -650,15 +650,33 @@ function render(){
 let _resourceIdCopyRows = [];
 function openResourceIdCopyModal(){
   const rows = getCurrentOutageRows(); // same search+filter+sort as what's on screen, full set (not paginated)
-  _resourceIdCopyRows = rows.map(r => [r.resourceId || '', r.outageType || '']);
+
+  // Collapse duplicate Resource IDs down to just the one with the latest
+  // date — a resource can have many historical rows (repeated trips over
+  // time), but this list should show each resource's current/most recent
+  // outage type only, not every past occurrence.
+  const latestByResourceId = new Map();
+  rows.forEach(r => {
+    const key = r.resourceId || '';
+    if(!key) return;
+    const rTime = new Date(r.dateOut || r.date || 0).getTime();
+    const existing = latestByResourceId.get(key);
+    if(!existing || rTime > existing._sortTime){
+      latestByResourceId.set(key, { ...r, _sortTime: rTime });
+    }
+  });
+  const dedupedRows = [...latestByResourceId.values()].sort((a,b) => (a.resourceId||'').localeCompare(b.resourceId||''));
+
+  _resourceIdCopyRows = dedupedRows.map(r => [r.resourceId || '', r.outageType || '']);
   const statusLabel = filterValue || 'All statuses';
+  const dupeCount = rows.length - dedupedRows.length;
   $('#modalBody').innerHTML = `
     <h2>Resource ID &amp; Outage Type</h2>
-    <div class="desc">${rows.length} row(s) — ${esc(statusLabel)}${searchTerm ? ' · search filter active' : ''}. Copy, then paste directly into Excel.</div>
+    <div class="desc">${dedupedRows.length} unique Resource ID(s) — ${esc(statusLabel)}${searchTerm ? ' · search filter active' : ''}${dupeCount ? ` · ${dupeCount} duplicate row(s) collapsed to their latest occurrence` : ''}. Copy, then paste directly into Excel.</div>
     <div class="copy-table-wrap">
       <table class="copy-preview-table">
         <thead><tr><th>Resource_ID</th><th>Outage_Type</th></tr></thead>
-        <tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.resourceId)}</td><td>${esc(r.outageType)||'—'}</td></tr>`).join('')}</tbody>
+        <tbody>${dedupedRows.map(r=>`<tr><td class="mono">${esc(r.resourceId)}</td><td>${esc(r.outageType)||'—'}</td></tr>`).join('')}</tbody>
       </table>
     </div>
     <div class="modal-actions">
