@@ -455,7 +455,7 @@ function toast(msg, type){
   const t = $('#toast');
   t.textContent = msg;
   t.className = 'toast show' + (type ? ' ' + type : '');
-  setTimeout(()=> t.classList.remove('show'), 2600);
+  setTimeout(()=> t.classList.remove('show'), 4000);
 }
 
 // ---------- API ----------
