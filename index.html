@@ -665,7 +665,7 @@ function openResourceIdCopyModal(){
       latestByResourceId.set(key, { ...r, _sortTime: rTime });
     }
   });
-  const dedupedRows = [...latestByResourceId.values()].sort((a,b) => (a.resourceId||'').localeCompare(b.resourceId||''));
+  const dedupedRows = [...latestByResourceId.values()].sort((a,b) => b._sortTime - a._sortTime);
 
   _resourceIdCopyRows = dedupedRows.map(r => [r.resourceId || '', r.outageType || '']);
   const statusLabel = filterValue || 'All statuses';
@@ -686,8 +686,7 @@ function openResourceIdCopyModal(){
   $('#overlay').classList.add('show');
 }
 function copyResourceIdTable(btn){
-  const lines = ['Resource_ID\tOutage_Type', ..._resourceIdCopyRows.map(r => r.join('\t'))];
-  const text = lines.join('\n');
+  const text = _resourceIdCopyRows.map(r => r.join('\t')).join('\n');
   const done = () => {
     const original = btn.textContent;
     btn.textContent = 'Copied!';
