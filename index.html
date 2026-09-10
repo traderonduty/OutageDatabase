@@ -1125,8 +1125,7 @@ async function changeDeratedDate(newDateStr){
   if(!newDateStr || !WEBAPP_URL) return;
   showLoading(true);
   try{
-    await apiPost('setDeratedDate', { date: newDateStr });
-    dataCache.derated = await apiGet('getDeratedPlants');
+    dataCache.derated = await apiPost('setDeratedDate', { date: newDateStr });
     toast('Date updated', 'success');
     render();
   }catch(e){
