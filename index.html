@@ -167,6 +167,44 @@
     color:var(--muted); font-weight:600; border-bottom:1px solid var(--line);
   }
   .copy-preview-table td{ padding:5px 12px; border-bottom:1px solid var(--line); }
+
+  .derated-date-label{
+    display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted);
+  }
+  .date-input-wrap{ position:relative; display:inline-flex; align-items:center; }
+  .date-input-wrap input[type="date"]{
+    background:var(--bg); border:1px solid var(--line); color:var(--text);
+    padding:6px 34px 6px 10px; border-radius:6px; font-size:13px; font-family:var(--sans);
+  }
+  .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator{
+    opacity:0; position:absolute; right:0; top:0; width:100%; height:100%; margin:0; cursor:pointer;
+  }
+  .date-input-icon{
+    position:absolute; right:9px; top:50%; transform:translateY(-50%);
+    width:16px; height:16px; color:var(--amber); pointer-events:none; transition:transform .15s ease;
+  }
+  .date-input-wrap:hover .date-input-icon{ transform:translateY(-50%) scale(1.1); }
+  .derated-wrap{ padding:20px 24px; display:flex; flex-direction:column; gap:22px; }
+  .derated-section-header{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:8px;
+  }
+  .derated-section-header h3{
+    margin:0; font-size:13px; letter-spacing:.04em; color:var(--muted); font-weight:700;
+  }
+  .copy-btn-text{
+    background:none; border:1px solid var(--line); color:var(--muted); border-radius:6px;
+    padding:5px 12px; font-size:12px; cursor:pointer; transition:border-color .15s ease, color .15s ease;
+  }
+  .copy-btn-text:hover{ border-color:var(--amber); color:var(--amber); }
+  .derated-table{ width:100%; border-collapse:collapse; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .derated-table th{
+    text-align:left; padding:8px 14px; background:rgba(255,255,255,.03); color:var(--muted);
+    font-size:12px; font-weight:600; border-bottom:1px solid var(--line);
+  }
+  .derated-table td{ padding:8px 14px; font-size:13px; border-bottom:1px solid var(--line); }
+  .derated-table tr:last-child td{ border-bottom:none; }
+  .derated-table td.mono{ width:110px; white-space:nowrap; }
   th.sortable{ cursor:pointer; user-select:none; }
   th.sortable:hover{ color:var(--text); }
   .sort-arrow{ margin-left:4px; color:var(--amber); font-size:10px; }
@@ -253,6 +291,7 @@
     <button data-view="outages" class="active">Outages <span class="count" id="countOutages">–</span></button>
     <button data-view="plants">Plant Mapping <span class="count" id="countPlants">–</span></button>
     <button data-view="review">Needs Review <span class="count" id="countReview">–</span></button>
+    <button data-view="derated">Derated Plants</button>
   </div>
   <div class="ext-links">
     <a href="https://colab.research.google.com/drive/1eNK3qEonWs6-YUJgJyZwgDjKbuilmUYR#scrollTo=z4nhI3pzeq2D" target="_blank" rel="noopener">SO Extractor</a>
@@ -299,7 +338,7 @@ let WEBAPP_URL = '';
 // change this if you ever create a new Apps Script deployment.
 const DEFAULT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxgNWfUXzYMk8FnlGeCE0QTZJjuvtWCBF4jLcOhcFjQ3QsY5oAh6dNcskWGuZWublIi/exec';
 let currentView = 'outages';
-let dataCache = { outages: [], plants: [], review: [], technology: {} };
+let dataCache = { outages: [], plants: [], review: [], technology: {}, derated: null };
 let technologyByUpper = {};
 let searchTerm = '';
 let filterValue = '';
@@ -495,8 +534,8 @@ async function refreshAll(){
   if(!WEBAPP_URL) return;
   showLoading(true);
   try{
-    const [outages, plants, review, technology] = await Promise.all([
-      apiGet('getOutages'), apiGet('getPlants'), apiGet('getReview'), apiGet('getTechnology')
+    const [outages, plants, review, technology, derated] = await Promise.all([
+      apiGet('getOutages'), apiGet('getPlants'), apiGet('getReview'), apiGet('getTechnology'), apiGet('getDeratedPlants')
     ]);
     // Data consistency safety net: any row that already has both Date Out
     // and Date In but is still marked Ongoing (e.g. edited directly in the
@@ -506,7 +545,7 @@ async function refreshAll(){
       await Promise.all(toFix.map(o => apiPost('updateOutage', { row:o.row, data:{ status:'Restored' } })));
       toFix.forEach(o => { o.status = 'Restored'; });
     }
-    dataCache = { outages, plants, review, technology };
+    dataCache = { outages, plants, review, technology, derated };
     technologyByUpper = {};
     Object.entries(technology || {}).forEach(([id, tech]) => { technologyByUpper[id.toUpperCase()] = tech; });
     setConnStatus('live');
@@ -643,7 +682,8 @@ function exportCSV(view){
 function render(){
   if(currentView === 'outages') renderOutages();
   else if(currentView === 'plants') renderPlants();
-  else renderReview();
+  else if(currentView === 'review') renderReview();
+  else renderDerated();
 }
 
 // ================= OUTAGES =================
@@ -1037,6 +1077,78 @@ function renderReview(){
       <td><button class="btn ghost" onclick="openResolve(${r.row})">Resolve</button></td>
     </tr>`).join('')}</tbody>
   </table>`;
+}
+
+// ================= DERATED PLANTS =================
+function renderDerated(){
+  $('#viewTitle').textContent = 'Derated Plants';
+  $('#toolbar').style.display = 'none';
+
+  const derated = dataCache.derated;
+  $('#viewMeta').textContent = derated ? `Data anchored to ${derated.anchorDate}` : '';
+  $('#viewActions').innerHTML = `
+    <label class="derated-date-label">
+      Date
+      <span class="date-input-wrap">
+        <input type="date" id="deratedDatePicker" value="${derated ? esc(derated.anchorDate) : ''}" onchange="changeDeratedDate(this.value)">
+        <svg class="date-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+          <line x1="16" y1="2" x2="16" y2="6"></line>
+          <line x1="8" y1="2" x2="8" y2="6"></line>
+          <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+      </span>
+    </label>`;
+
+  if(!derated){ $('#content').innerHTML = emptyState('No data loaded yet.'); return; }
+
+  const regions = [
+    { key:'luzon',    label:'LUZON',    rows: derated.luzon },
+    { key:'visayas',  label:'VISAYAS',  rows: derated.visayas },
+    { key:'mindanao', label:'MINDANAO', rows: derated.mindanao }
+  ];
+
+  $('#content').innerHTML = `<div class="derated-wrap">${regions.map(region => `
+    <div class="derated-section">
+      <div class="derated-section-header">
+        <h3>${region.label}</h3>
+        <button class="copy-btn-text" onclick="copyDeratedRegion(this,'${region.key}')">Copy</button>
+      </div>
+      <table class="derated-table">
+        <thead><tr><th>Time</th><th>Advisory</th></tr></thead>
+        <tbody>${region.rows.map(r=>`<tr><td class="mono">${esc(r.time)}</td><td>${esc(r.advisory)||'—'}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>`).join('')}</div>`;
+}
+
+async function changeDeratedDate(newDateStr){
+  if(!newDateStr || !WEBAPP_URL) return;
+  showLoading(true);
+  try{
+    await apiPost('setDeratedDate', { date: newDateStr });
+    dataCache.derated = await apiGet('getDeratedPlants');
+    toast('Date updated', 'success');
+    render();
+  }catch(e){
+    toast('Failed to update date: ' + e.message, 'error');
+  }finally{
+    showLoading(false);
+  }
+}
+
+function copyDeratedRegion(btn, key){
+  const rows = (dataCache.derated && dataCache.derated[key]) || [];
+  const text = rows.map(r => r.advisory || '').join('\n');
+  const done = () => {
+    const original = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(()=>{ btn.textContent = original; }, 1200);
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=> fallbackCopy(text, done));
+  }else{
+    fallbackCopy(text, done);
+  }
 }
 function openResolve(row){
   const item = dataCache.review.find(r=>r.row===row);
