@@ -1268,25 +1268,21 @@ async function submitResolve(row){
   if(!data.plantAlias || !data.resourceId){ toast('Plant alias and Resource ID are required', 'error'); return; }
   try{
     // If this is a pure restoration (Date In filled, no Date Out) and this
-    // Resource ID already has an open Ongoing row, close THAT row instead
-    // of creating a brand-new orphaned "Restored" record with no Date Out
-    // — mirroring how the automated builder pairs OUT/IN events for the
-    // same resource. This is exactly the case that lands in Needs Review
-    // in the first place (an alias the builder couldn't auto-resolve), so
-    // without this check every manual resolve of a restoration message
-    // would silently leave the real open outage stuck as Ongoing forever.
-    // If more than one Ongoing row somehow exists for this resource, the
-    // one with the latest Date Out is the one that gets closed.
+    // Resource ID has any open Ongoing rows, close ALL of them instead of
+    // creating a brand-new orphaned "Restored" record with no Date Out —
+    // mirroring the automated builder's restoration logic: a resource
+    // can't really have multiple concurrent outages, so any other Ongoing
+    // rows are stale duplicates that close alongside this one, all with
+    // the same restoration Date In. Already-Restored rows are untouched;
+    // this only ever looks at rows with status === 'Ongoing'.
     const openMatches = !data.dateOut && data.dateIn
       ? dataCache.outages.filter(o => o.resourceId === data.resourceId && o.status === 'Ongoing')
       : [];
-    const openMatch = openMatches.length
-      ? openMatches.reduce((latest, o) =>
-          new Date(o.dateOut || o.date || 0) > new Date(latest.dateOut || latest.date || 0) ? o : latest)
-      : null;
 
-    if(openMatch){
-      await apiPost('updateOutage', { row: openMatch.row, data: { dateIn: data.dateIn, status: 'Restored' } });
+    if(openMatches.length){
+      await Promise.all(openMatches.map(o =>
+        apiPost('updateOutage', { row: o.row, data: { dateIn: data.dateIn, status: 'Restored' } })
+      ));
       await apiPost('deleteReview', { reviewRow: row });
     }else{
       await apiPost('resolveReview', { reviewRow: row, data });
@@ -1302,7 +1298,9 @@ async function submitResolve(row){
       }
     }
     closeModal();
-    toast(openMatch ? 'Closed existing Ongoing outage' : 'Resolved and added to Outage Database', 'success');
+    toast(openMatches.length
+      ? `Closed ${openMatches.length} Ongoing outage${openMatches.length===1?'':'s'}`
+      : 'Resolved and added to Outage Database', 'success');
     await refreshAll();
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
