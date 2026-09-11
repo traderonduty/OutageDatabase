@@ -897,13 +897,18 @@ function editStatusCell(el, row, current){
   </select>`;
   el.querySelector('select').focus();
 }
-// Closes every OTHER currently-Ongoing row for the same Resource ID (same
-// Date In, status Restored) — used wherever a manual edit turns a row
-// Restored, so duplicate stuck-Ongoing rows for that resource don't get
-// silently left behind. Mirrors the automated builder's restoration logic.
-async function closeOtherOngoingDuplicates(resourceId, dateIn, excludeRow){
+// Closes every OTHER currently-Ongoing row for the same Resource ID whose
+// Date Out is at or before cutoffDateOut (same Date In, status Restored) —
+// used wherever a manual edit turns a row Restored, so duplicate
+// stuck-Ongoing rows for that resource don't get silently left behind.
+// The cutoff matters: a duplicate that started AFTER the row you're
+// resolving is more likely a genuinely separate, newer outage than a
+// stale copy of the one you're closing, so it's left untouched.
+async function closeOtherOngoingDuplicates(resourceId, dateIn, excludeRow, cutoffDateOut){
+  const cutoffTime = cutoffDateOut ? new Date(cutoffDateOut).getTime() : Infinity;
   const dupes = dataCache.outages.filter(o =>
-    o.resourceId === resourceId && o.status === 'Ongoing' && o.row !== excludeRow);
+    o.resourceId === resourceId && o.status === 'Ongoing' && o.row !== excludeRow &&
+    new Date(o.dateOut || 0).getTime() <= cutoffTime);
   if(dupes.length){
     await Promise.all(dupes.map(o =>
       apiPost('updateOutage', { row: o.row, data: { dateIn, status: 'Restored' } })
@@ -926,7 +931,7 @@ async function commitEdit(input, row, field){
     await apiPost('updateOutage', { row, data: payload });
     let closedCount = 0;
     if(payload.status === 'Restored' && merged.dateIn){
-      closedCount = await closeOtherOngoingDuplicates(merged.resourceId, merged.dateIn, row);
+      closedCount = await closeOtherOngoingDuplicates(merged.resourceId, merged.dateIn, row, merged.dateOut);
     }
     toast(closedCount ? `Saved · closed ${closedCount} other Ongoing duplicate${closedCount===1?'':'s'}` : 'Saved', 'success');
     await refreshAll();
@@ -1000,7 +1005,7 @@ async function submitOutage(row){
     else await apiPost('addOutage', { data });
     let closedCount = 0;
     if(data.status === 'Restored' && data.dateIn){
-      closedCount = await closeOtherOngoingDuplicates(data.resourceId, data.dateIn, row || null);
+      closedCount = await closeOtherOngoingDuplicates(data.resourceId, data.dateIn, row || null, data.dateOut);
     }
     closeModal();
     const base = row ? 'Record updated' : 'Record added';
@@ -1352,9 +1357,12 @@ async function submitResolve(row){
     // can't really have multiple concurrent outages, so any other Ongoing
     // rows are stale duplicates that close alongside this one, all with
     // the same restoration Date In. Already-Restored rows are untouched;
-    // this only ever looks at rows with status === 'Ongoing'.
+    // this only ever looks at rows with status === 'Ongoing'. A duplicate
+    // that started AFTER this restoration's own Date In can't logically
+    // be the one being restored, so it's excluded too.
     const openMatches = !data.dateOut && data.dateIn
-      ? dataCache.outages.filter(o => o.resourceId === data.resourceId && o.status === 'Ongoing')
+      ? dataCache.outages.filter(o => o.resourceId === data.resourceId && o.status === 'Ongoing' &&
+          new Date(o.dateOut || 0).getTime() <= new Date(data.dateIn).getTime())
       : [];
 
     let closedCount = 0;
