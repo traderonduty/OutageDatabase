@@ -842,6 +842,20 @@ function editStatusCell(el, row, current){
   </select>`;
   el.querySelector('select').focus();
 }
+// Closes every OTHER currently-Ongoing row for the same Resource ID (same
+// Date In, status Restored) — used wherever a manual edit turns a row
+// Restored, so duplicate stuck-Ongoing rows for that resource don't get
+// silently left behind. Mirrors the automated builder's restoration logic.
+async function closeOtherOngoingDuplicates(resourceId, dateIn, excludeRow){
+  const dupes = dataCache.outages.filter(o =>
+    o.resourceId === resourceId && o.status === 'Ongoing' && o.row !== excludeRow);
+  if(dupes.length){
+    await Promise.all(dupes.map(o =>
+      apiPost('updateOutage', { row: o.row, data: { dateIn, status: 'Restored' } })
+    ));
+  }
+  return dupes.length;
+}
 async function commitEdit(input, row, field){
   const value = input.value;
   try{
@@ -855,7 +869,11 @@ async function commitEdit(input, row, field){
       payload.status = 'Restored';
     }
     await apiPost('updateOutage', { row, data: payload });
-    toast('Saved', 'success');
+    let closedCount = 0;
+    if(payload.status === 'Restored' && merged.dateIn){
+      closedCount = await closeOtherOngoingDuplicates(merged.resourceId, merged.dateIn, row);
+    }
+    toast(closedCount ? `Saved · closed ${closedCount} other Ongoing duplicate${closedCount===1?'':'s'}` : 'Saved', 'success');
     await refreshAll();
   }catch(e){ toast('Save failed: ' + e.message, 'error'); }
 }
@@ -925,8 +943,13 @@ async function submitOutage(row){
   try{
     if(row) await apiPost('updateOutage', { row, data });
     else await apiPost('addOutage', { data });
+    let closedCount = 0;
+    if(data.status === 'Restored' && data.dateIn){
+      closedCount = await closeOtherOngoingDuplicates(data.resourceId, data.dateIn, row || null);
+    }
     closeModal();
-    toast(row? 'Record updated' : 'Record added', 'success');
+    const base = row ? 'Record updated' : 'Record added';
+    toast(closedCount ? `${base} · closed ${closedCount} other Ongoing duplicate${closedCount===1?'':'s'}` : base, 'success');
     await refreshAll();
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
@@ -1279,12 +1302,40 @@ async function submitResolve(row){
       ? dataCache.outages.filter(o => o.resourceId === data.resourceId && o.status === 'Ongoing')
       : [];
 
+    let closedCount = 0;
+    let deletedStaleCount = 0;
+
     if(openMatches.length){
       await Promise.all(openMatches.map(o =>
         apiPost('updateOutage', { row: o.row, data: { dateIn: data.dateIn, status: 'Restored' } })
       ));
+      closedCount = openMatches.length;
       await apiPost('deleteReview', { reviewRow: row });
     }else{
+      // This is being resolved as a NEW outage (Date Out filled) — check
+      // whether this Resource ID already has an Ongoing row on record.
+      // The automated builder treats this as a conflict and replaces the
+      // stale open row automatically; here, since a person is directly in
+      // the loop, they're warned and must confirm before anything is
+      // deleted rather than it happening silently.
+      const conflicts = dataCache.outages.filter(o => o.resourceId === data.resourceId && o.status === 'Ongoing');
+      if(conflicts.length){
+        const list = conflicts.map(o => `• Row ${o.row} — Date Out ${fmt(o.dateOut)}`).join('\n');
+        const proceed = confirm(
+          `${data.resourceId} already has ${conflicts.length} Ongoing outage${conflicts.length===1?'':'s'} on record:\n\n${list}\n\n` +
+          `Resolving this as a new outage will delete ${conflicts.length===1?'that entry':'those entries'} and log this one fresh instead. Continue?`
+        );
+        if(!proceed) return;
+        // Delete sequentially, highest row number first — deleting a row
+        // shifts every row below it up by one, so deleting out of order
+        // (or in parallel) would make later deletions target the wrong
+        // row once earlier ones have already shifted the sheet.
+        const sortedDesc = [...conflicts].sort((a,b) => b.row - a.row);
+        for(const o of sortedDesc){
+          await apiPost('deleteOutage', { row: o.row });
+        }
+        deletedStaleCount = conflicts.length;
+      }
       await apiPost('resolveReview', { reviewRow: row, data });
     }
     if($('#r_addToMapping').checked){
@@ -1298,9 +1349,10 @@ async function submitResolve(row){
       }
     }
     closeModal();
-    toast(openMatches.length
-      ? `Closed ${openMatches.length} Ongoing outage${openMatches.length===1?'':'s'}`
-      : 'Resolved and added to Outage Database', 'success');
+    let msg = 'Resolved and added to Outage Database';
+    if(closedCount) msg = `Closed ${closedCount} Ongoing outage${closedCount===1?'':'s'}`;
+    else if(deletedStaleCount) msg = `Resolved · replaced ${deletedStaleCount} stale Ongoing entr${deletedStaleCount===1?'y':'ies'}`;
+    toast(msg, 'success');
     await refreshAll();
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
