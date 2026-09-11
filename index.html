@@ -1275,8 +1275,14 @@ async function submitResolve(row){
     // in the first place (an alias the builder couldn't auto-resolve), so
     // without this check every manual resolve of a restoration message
     // would silently leave the real open outage stuck as Ongoing forever.
-    const openMatch = !data.dateOut && data.dateIn
-      ? dataCache.outages.find(o => o.resourceId === data.resourceId && o.status === 'Ongoing')
+    // If more than one Ongoing row somehow exists for this resource, the
+    // one with the latest Date Out is the one that gets closed.
+    const openMatches = !data.dateOut && data.dateIn
+      ? dataCache.outages.filter(o => o.resourceId === data.resourceId && o.status === 'Ongoing')
+      : [];
+    const openMatch = openMatches.length
+      ? openMatches.reduce((latest, o) =>
+          new Date(o.dateOut || o.date || 0) > new Date(latest.dateOut || latest.date || 0) ? o : latest)
       : null;
 
     if(openMatch){
