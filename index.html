@@ -1267,7 +1267,24 @@ async function submitResolve(row){
   };
   if(!data.plantAlias || !data.resourceId){ toast('Plant alias and Resource ID are required', 'error'); return; }
   try{
-    await apiPost('resolveReview', { reviewRow: row, data });
+    // If this is a pure restoration (Date In filled, no Date Out) and this
+    // Resource ID already has an open Ongoing row, close THAT row instead
+    // of creating a brand-new orphaned "Restored" record with no Date Out
+    // — mirroring how the automated builder pairs OUT/IN events for the
+    // same resource. This is exactly the case that lands in Needs Review
+    // in the first place (an alias the builder couldn't auto-resolve), so
+    // without this check every manual resolve of a restoration message
+    // would silently leave the real open outage stuck as Ongoing forever.
+    const openMatch = !data.dateOut && data.dateIn
+      ? dataCache.outages.find(o => o.resourceId === data.resourceId && o.status === 'Ongoing')
+      : null;
+
+    if(openMatch){
+      await apiPost('updateOutage', { row: openMatch.row, data: { dateIn: data.dateIn, status: 'Restored' } });
+      await apiPost('deleteReview', { reviewRow: row });
+    }else{
+      await apiPost('resolveReview', { reviewRow: row, data });
+    }
     if($('#r_addToMapping').checked){
       const aliasNorm = data.plantAlias.trim().toLowerCase();
       const alreadyMapped = dataCache.plants.some(p => (p.alias||'').trim().toLowerCase() === aliasNorm);
@@ -1279,7 +1296,7 @@ async function submitResolve(row){
       }
     }
     closeModal();
-    toast('Resolved and added to Outage Database', 'success');
+    toast(openMatch ? 'Closed existing Ongoing outage' : 'Resolved and added to Outage Database', 'success');
     await refreshAll();
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
