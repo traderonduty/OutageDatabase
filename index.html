@@ -93,6 +93,19 @@
   .page-indicator{ font-size:12px; color:var(--muted); }
   .ongoing-days{ font-size:10px; color:var(--muted); margin-left:5px; }
   .ongoing-days.stale{ color:var(--red); font-weight:600; }
+  .dup-banner{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    background:rgba(217,164,65,.12); border:1px solid rgba(217,164,65,.4); border-radius:8px;
+    padding:10px 14px; margin:16px 0; font-size:12.5px;
+  }
+  .dup-banner .dup-banner-text{ display:flex; align-items:center; gap:8px; }
+  .dup-banner svg{ width:15px; height:15px; color:var(--amber); flex:none; }
+  .dup-banner b{ color:var(--amber); }
+  .dup-banner-btn{
+    background:none; border:1px solid var(--amber); color:var(--amber); border-radius:6px;
+    padding:5px 12px; font-size:12px; cursor:pointer; white-space:nowrap; transition:background .15s ease;
+  }
+  .dup-banner-btn:hover{ background:rgba(217,164,65,.15); }
 
   /* ---------- Main ---------- */
   .main{ flex:1; display:flex; flex-direction:column; min-width:0; }
@@ -160,6 +173,8 @@
   .resid-ongoing:hover{ background:rgba(255,214,51,.32); }
   .resid-restored{ background:rgba(76,175,109,.22); color:#8FE0AA; font-weight:600; }
   .resid-restored:hover{ background:rgba(76,175,109,.32); }
+  .resid-duplicate{ background:rgba(217,164,65,.4); color:#FFE066; font-weight:700; }
+  .resid-duplicate:hover{ background:rgba(217,164,65,.5); }
   .copy-btn{
     background:none; border:1px solid var(--line); color:var(--muted); border-radius:5px;
     width:20px; height:20px; padding:0; flex:none; display:inline-flex; align-items:center;
@@ -575,7 +590,7 @@ $$('.nav button').forEach(btn => btn.onclick = () => {
   $$('.nav button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   currentView = btn.dataset.view;
-  searchTerm=''; filterValue='';
+  searchTerm=''; filterValue=''; showDuplicatesOnly=false;
   $('#searchBox').value='';
   $('.search-wrap').classList.remove('has-text');
   updateOutagesCountBubble();
@@ -585,6 +600,7 @@ $('#searchBox').addEventListener('input', e => {
   searchTerm = e.target.value.toLowerCase();
   $('.search-wrap').classList.toggle('has-text', e.target.value.length > 0);
   currentPage[currentView] = 1;
+  showDuplicatesOnly = false;
   render();
 });
 function clearSearch(){
@@ -596,7 +612,7 @@ function clearSearch(){
   currentPage[currentView] = 1;
   render();
 }
-$('#filterSelect').addEventListener('change', e => { filterValue = e.target.value; currentPage[currentView] = 1; render(); });
+$('#filterSelect').addEventListener('change', e => { filterValue = e.target.value; currentPage[currentView] = 1; showDuplicatesOnly = false; render(); });
 
 // ---------- pagination ----------
 const PAGE_SIZE = 50;
@@ -773,6 +789,20 @@ function updateOutagesCountBubble(){
   el.classList.remove('status-all','status-ongoing','status-restored');
   el.classList.add(cls);
 }
+let showDuplicatesOnly = false;
+function getOngoingDuplicateResourceIds(){
+  const counts = {};
+  dataCache.outages.forEach(o => {
+    if(o.status === 'Ongoing' && o.resourceId){
+      counts[o.resourceId] = (counts[o.resourceId] || 0) + 1;
+    }
+  });
+  return Object.keys(counts).filter(id => counts[id] > 1);
+}
+function toggleDuplicatesOnly(){
+  showDuplicatesOnly = !showDuplicatesOnly;
+  render();
+}
 function renderOutages(){
   $('#viewTitle').textContent = 'Outage Database';
   const sel = $('#filterSelect');
@@ -780,27 +810,51 @@ function renderOutages(){
   sel.value = filterValue;
   updateOutagesCountBubble();
 
-  let rows = getCurrentOutageRows();
-  const isFiltered = !!(searchTerm || filterValue);
-  $('#viewMeta').textContent = isFiltered
-    ? `${rows.length} of ${dataCache.outages.length} outage records`
-    : `${dataCache.outages.length} outage records`;
+  const dupIds = getOngoingDuplicateResourceIds();
+  let bannerHtml = '';
+  if(dupIds.length){
+    const shown = dupIds.slice(0, 3).map(esc).join(', ');
+    const more = dupIds.length > 3 ? `, +${dupIds.length - 3} more` : '';
+    bannerHtml = `<div class="dup-banner">
+      <span class="dup-banner-text">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        <span><b>${dupIds.length} Resource ID${dupIds.length===1?'':'s'}</b> ${dupIds.length===1?'has':'have'} multiple concurrent Ongoing outages (${shown}${more})</span>
+      </span>
+      <button class="dup-banner-btn" onclick="toggleDuplicatesOnly()">${showDuplicatesOnly ? 'Show all outages' : 'Show duplicates only'}</button>
+    </div>`;
+  }else{
+    showDuplicatesOnly = false; // nothing left to show a filtered view of
+  }
+
+  let rows;
+  if(showDuplicatesOnly){
+    rows = dataCache.outages
+      .filter(o => o.status === 'Ongoing' && dupIds.includes(o.resourceId))
+      .sort((a,b) => a.resourceId.localeCompare(b.resourceId) || new Date(b.dateOut||0) - new Date(a.dateOut||0));
+    $('#viewMeta').textContent = `${rows.length} duplicate Ongoing row(s) across ${dupIds.length} Resource ID${dupIds.length===1?'':'s'}`;
+  }else{
+    rows = getCurrentOutageRows();
+    const isFiltered = !!(searchTerm || filterValue);
+    $('#viewMeta').textContent = isFiltered
+      ? `${rows.length} of ${dataCache.outages.length} outage records`
+      : `${dataCache.outages.length} outage records`;
+  }
   $('#viewActions').innerHTML = `<button class="btn primary" onclick="openResourceIdCopyModal()">Copy ID &amp; Outage</button><button class="btn primary" onclick="openAddOutage()">Add record</button>`;
   $('#toolbar').style.display='flex';
 
-  if(!rows.length){ $('#content').innerHTML = emptyState('No records match.'); return; }
+  if(!rows.length){ $('#content').innerHTML = bannerHtml + emptyState('No records match.'); return; }
 
   const { pageRows, totalPages, page } = paginate('outages', rows);
 
-  $('#content').innerHTML = `<table>
+  $('#content').innerHTML = bannerHtml + `<table>
     <thead><tr>
       ${thSort('outages','month','Month')}${thSort('outages','date','Date')}${thSort('outages','plantAlias','Plant Alias')}${thSort('outages','resourceId','Resource ID')}${thSort('outages','technology','Technology')}${thSort('outages','outageType','Outage Type')}${thSort('outages','category','Category')}${thSort('outages','dateOut','Date Out')}${thSort('outages','dateIn','Date In')}${thSort('outages','status','Status')}${thSort('outages','soAdvisory','SO Advisory')}<th></th>
     </tr></thead>
-    <tbody>${pageRows.map(r => outageRow(r)).join('')}</tbody>
+    <tbody>${pageRows.map(r => outageRow(r, r.status==='Ongoing' && dupIds.includes(r.resourceId))).join('')}</tbody>
   </table>${paginationControls('outages', page, totalPages)}`;
 }
 
-function outageRow(r){
+function outageRow(r, isDuplicate){
   const statusClass = r.status === 'Ongoing' ? 'ongoing' : 'restored';
   const typeClass = r.outageType === 'Planned' ? 'planned' : 'unplanned';
   let ongoingDaysHtml = '';
@@ -811,11 +865,12 @@ function outageRow(r){
       ongoingDaysHtml = `<span class="ongoing-days${days>=staleThreshold?' stale':''}" title="${days} day${days===1?'':'s'} since Date Out">${days}d</span>`;
     }
   }
+  const resIdClass = isDuplicate ? ' resid-duplicate' : r.status==='Ongoing' ? ' resid-ongoing' : r.status.startsWith('Restored') ? ' resid-restored' : '';
   return `<tr>
     <td>${esc(r.month)}</td>
     <td>${fmt(r.date)}</td>
     <td class="editable" onclick="editCell(this,'outages',${r.row},'plantAlias','${esc(r.plantAlias)}')">${esc(r.plantAlias)}</td>
-    <td class="editable${r.status==='Ongoing'?' resid-ongoing':r.status.startsWith('Restored')?' resid-restored':''}" onclick="editCell(this,'outages',${r.row},'resourceId','${esc(r.resourceId)}')">${esc(r.resourceId)}</td>
+    <td class="editable${resIdClass}" onclick="editCell(this,'outages',${r.row},'resourceId','${esc(r.resourceId)}')" title="${isDuplicate?'Duplicate: another Ongoing row exists for this Resource ID':''}">${esc(r.resourceId)}</td>
     <td class="editable" onclick="editCell(this,'outages',${r.row},'technology','${esc(r.technology)}')">${esc(r.technology)||'—'}</td>
     <td><span class="badge ${typeClass}">${r.outageType||'—'}</span></td>
     <td class="editable" onclick="editCell(this,'outages',${r.row},'category','${esc(r.category)}')">${esc(r.category)||'—'}</td>
