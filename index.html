@@ -869,34 +869,19 @@ function outageRow(r, isDuplicate){
   return `<tr>
     <td>${esc(r.month)}</td>
     <td>${fmt(r.date)}</td>
-    <td class="editable" onclick="editCell(this,'outages',${r.row},'plantAlias','${esc(r.plantAlias)}')">${esc(r.plantAlias)}</td>
-    <td class="editable${resIdClass}" onclick="editCell(this,'outages',${r.row},'resourceId','${esc(r.resourceId)}')" title="${isDuplicate?'Duplicate: another Ongoing row exists for this Resource ID':''}">${esc(r.resourceId)}</td>
-    <td class="editable" onclick="editCell(this,'outages',${r.row},'technology','${esc(r.technology)}')">${esc(r.technology)||'—'}</td>
+    <td>${esc(r.plantAlias)}</td>
+    <td class="${resIdClass}" title="${isDuplicate?'Duplicate: another Ongoing row exists for this Resource ID':''}">${esc(r.resourceId)}</td>
+    <td>${esc(r.technology)||'—'}</td>
     <td><span class="badge ${typeClass}">${r.outageType||'—'}</span></td>
-    <td class="editable" onclick="editCell(this,'outages',${r.row},'category','${esc(r.category)}')">${esc(r.category)||'—'}</td>
-    <td class="mono editable" onclick="editDateCell(this,${r.row},'dateOut','${r.dateOut}')">${fmt(r.dateOut)}</td>
-    <td class="mono editable" onclick="editDateCell(this,${r.row},'dateIn','${r.dateIn}')">${fmt(r.dateIn)}</td>
-    <td class="editable" onclick="editStatusCell(this,${r.row},'${esc(r.status)}')"><span class="badge ${statusClass}">${r.status}</span>${ongoingDaysHtml}</td>
+    <td>${esc(r.category)||'—'}</td>
+    <td class="mono">${fmt(r.dateOut)}</td>
+    <td class="mono">${fmt(r.dateIn)}</td>
+    <td><span class="badge ${statusClass}">${r.status}</span>${ongoingDaysHtml}</td>
     <td class="msg-cell">${esc(r.soAdvisory)}</td>
     <td><button class="btn ghost" onclick="openAddOutage(${r.row})">Edit</button></td>
   </tr>`;
 }
 
-function editCell(el, view, row, field, current){
-  el.innerHTML = `<input value="${esc(current)}" onblur="commitEdit(this,${row},'${field}')" onkeydown="if(event.key==='Enter')this.blur()">`;
-  el.querySelector('input').focus();
-}
-function editDateCell(el, row, field, current){
-  const val = current ? current.slice(0,16) : '';
-  el.innerHTML = `<input type="datetime-local" lang="en-GB" value="${val}" onblur="commitEdit(this,${row},'${field}')">`;
-  el.querySelector('input').focus();
-}
-function editStatusCell(el, row, current){
-  el.innerHTML = `<select onblur="commitEdit(this,${row},'status')" onchange="this.blur()">
-    ${['Ongoing','Restored','Restored (no prior OUT found)'].map(s=>`<option ${s===current?'selected':''}>${s}</option>`).join('')}
-  </select>`;
-  el.querySelector('select').focus();
-}
 // Closes every OTHER currently-Ongoing row for the same Resource ID whose
 // Date Out is at or before cutoffDateOut (same Date In, status Restored) —
 // used wherever a manual edit turns a row Restored, so duplicate
@@ -915,27 +900,6 @@ async function closeOtherOngoingDuplicates(resourceId, dateIn, excludeRow, cutof
     ));
   }
   return dupes.length;
-}
-async function commitEdit(input, row, field){
-  const value = input.value;
-  try{
-    const payload = { [field]: value };
-    // Data consistency check: if this edit results in both Date Out and
-    // Date In being present while Status is still Ongoing, flip Status to
-    // Restored too — an outage with both dates recorded isn't ongoing.
-    const existing = dataCache.outages.find(o=>o.row===row) || {};
-    const merged = { ...existing, ...payload };
-    if(merged.dateOut && merged.dateIn && merged.status === 'Ongoing'){
-      payload.status = 'Restored';
-    }
-    await apiPost('updateOutage', { row, data: payload });
-    let closedCount = 0;
-    if(payload.status === 'Restored' && merged.dateIn){
-      closedCount = await closeOtherOngoingDuplicates(merged.resourceId, merged.dateIn, row, merged.dateOut);
-    }
-    toast(closedCount ? `Saved · closed ${closedCount} other Ongoing duplicate${closedCount===1?'':'s'}` : 'Saved', 'success');
-    await refreshAll();
-  }catch(e){ toast('Save failed: ' + e.message, 'error'); }
 }
 
 let outageTechnologyAutoLock = false;
@@ -1101,70 +1065,46 @@ function renderPlants(){
   if(!rows.length){ $('#content').innerHTML = emptyState('No plants match.'); return; }
 
   const { pageRows, totalPages, page } = paginate('plants', rows);
-  const resourceIds = [...new Set([...dataCache.plants.map(p=>p.resourceId), ...Object.keys(dataCache.technology||{})].filter(Boolean))].sort();
 
   $('#content').innerHTML = `<table>
-    <thead><tr>${thSort('plants','alias','Alias (as in SO Advisory)')}${thSort('plants','resourceId','Resource ID')}${thSort('plants','capacity','Capacity (MW)')}${thSort('plants','region','Region')}</tr></thead>
+    <thead><tr>${thSort('plants','alias','Alias (as in SO Advisory)')}${thSort('plants','resourceId','Resource ID')}${thSort('plants','capacity','Capacity (MW)')}${thSort('plants','region','Region')}<th></th></tr></thead>
     <tbody>${pageRows.map(p=>`<tr>
-      <td class="editable" onclick="editPlantCell(this,${p.row},'alias','${esc(p.alias)}')">${esc(p.alias)}</td>
-      <td class="mono editable" onclick="editPlantCell(this,${p.row},'resourceId','${esc(p.resourceId)}')">${esc(p.resourceId)}</td>
-      <td class="mono editable" onclick="editPlantCell(this,${p.row},'capacity','${esc(p.capacity)}')">${p.capacity||'—'}</td>
-      <td class="editable" onclick="editPlantCell(this,${p.row},'region','${esc(p.region)}')">${esc(p.region)||'—'}</td>
+      <td>${esc(p.alias)}</td>
+      <td class="mono">${esc(p.resourceId)}</td>
+      <td class="mono">${p.capacity||'—'}</td>
+      <td>${esc(p.region)||'—'}</td>
+      <td><button class="btn ghost" onclick="openAddPlant(${p.row})">Edit</button></td>
     </tr>`).join('')}</tbody>
   </table>
-  <datalist id="plantEditResourceIdList">${resourceIds.map(id=>`<option value="${esc(id)}">`).join('')}</datalist>
   ${paginationControls('plants', page, totalPages)}`;
 }
-function editPlantCell(el, row, field, current){
-  if(field === 'region'){
-    el.innerHTML = `<select onblur="commitPlantEdit(this,${row},'region')" onchange="this.blur()">
-      <option value="">Select region</option>
-      ${['LUZON','VISAYAS','MINDANAO'].map(r=>`<option ${r===current?'selected':''}>${r}</option>`).join('')}
-    </select>`;
-    el.querySelector('select').focus();
-    return;
-  }
-  const isResourceId = field === 'resourceId';
-  const type = field === 'capacity' ? 'number' : 'text';
-  const step = field === 'capacity' ? ' step="0.1"' : '';
-  const listAttr = isResourceId ? ' list="plantEditResourceIdList"' : '';
-  el.innerHTML = `<input class="${isResourceId?'mono':''}" type="${type}"${step}${listAttr} value="${esc(current)}" onblur="commitPlantEdit(this,${row},'${field}')" onkeydown="if(event.key==='Enter')this.blur()">`;
-  el.querySelector('input').focus();
-}
-async function commitPlantEdit(input, row, field){
-  const value = input.value;
-  try{
-    await apiPost('updatePlant', { row, data:{ [field]: value } });
-    toast('Saved', 'success');
-    await refreshAll();
-  }catch(e){ toast('Save failed: ' + e.message, 'error'); }
-}
-function openAddPlant(){
+function openAddPlant(row){
+  const existing = row ? dataCache.plants.find(p => p.row === row) : null;
   const resourceIds = [...new Set([...dataCache.plants.map(p=>p.resourceId), ...Object.keys(dataCache.technology||{})].filter(Boolean))].sort();
-  plantRegionAutoLock = false;
-  plantCapacityAutoLock = false;
+  plantRegionAutoLock = !!existing;
+  plantCapacityAutoLock = !!existing;
   $('#modalBody').innerHTML = `
-    <h2>Add plant to mapping</h2>
-    <div class="desc">Adds a new alias so future advisories mentioning this plant resolve automatically.</div>
-    <div class="field"><label>Alias (exact text as it appears in SO_Advisories)</label><input id="p_alias" placeholder="e.g. CALACA 1"></div>
+    <h2>${existing ? 'Edit plant mapping' : 'Add plant to mapping'}</h2>
+    <div class="desc">${existing ? 'Row '+row+' in Plant Mapping.' : 'Adds a new alias so future advisories mentioning this plant resolve automatically.'}</div>
+    <div class="field"><label>Alias (exact text as it appears in SO_Advisories)</label><input id="p_alias" placeholder="e.g. CALACA 1" value="${esc(existing?.alias||'')}"></div>
     <div class="field"><label>Resource ID</label>
-      <input id="p_resourceId" class="mono" list="p_resourceId_list" placeholder="Pick existing or type a new one" autocomplete="off" oninput="autofillPlantFields(this.value)">
+      <input id="p_resourceId" class="mono" list="p_resourceId_list" placeholder="Pick existing or type a new one" autocomplete="off" oninput="autofillPlantFields(this.value)" value="${esc(existing?.resourceId||'')}">
       <datalist id="p_resourceId_list">${resourceIds.map(id=>`<option value="${esc(id)}">`).join('')}</datalist>
     </div>
     <div class="row2">
-      <div class="field"><label>Capacity (MW)</label><input id="p_capacity" type="number" step="0.1" oninput="plantCapacityAutoLock=true"></div>
+      <div class="field"><label>Capacity (MW)</label><input id="p_capacity" type="number" step="0.1" oninput="plantCapacityAutoLock=true" value="${esc(existing?.capacity||'')}"></div>
       <div class="field"><label>Region</label>
         <select id="p_region" onchange="plantRegionAutoLock=true">
           <option value="">Select region</option>
-          <option value="LUZON">LUZON</option>
-          <option value="VISAYAS">VISAYAS</option>
-          <option value="MINDANAO">MINDANAO</option>
+          <option value="LUZON" ${existing?.region==='LUZON'?'selected':''}>LUZON</option>
+          <option value="VISAYAS" ${existing?.region==='VISAYAS'?'selected':''}>VISAYAS</option>
+          <option value="MINDANAO" ${existing?.region==='MINDANAO'?'selected':''}>MINDANAO</option>
         </select>
       </div>
     </div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" onclick="submitPlant()">Add plant</button>
+      <button class="btn primary" onclick="submitPlant(${row||'null'})">${existing ? 'Save changes' : 'Add plant'}</button>
     </div>`;
   $('#overlay').classList.add('show');
 }
@@ -1188,16 +1128,17 @@ function autofillPlantFields(val){
   else if(n >= 9) region = 'MINDANAO';
   if(region) $('#p_region').value = region;
 }
-async function submitPlant(){
+async function submitPlant(row){
   const data = {
     alias:$('#p_alias').value.trim(), resourceId:$('#p_resourceId').value.trim(),
     capacity:$('#p_capacity').value, region:$('#p_region').value.trim()
   };
   if(!data.alias || !data.resourceId){ toast('Alias and Resource ID are required', 'error'); return; }
   try{
-    await apiPost('addPlant', { data });
+    if(row) await apiPost('updatePlant', { row, data });
+    else await apiPost('addPlant', { data });
     closeModal();
-    toast('Plant added', 'success');
+    toast(row ? 'Plant updated' : 'Plant added', 'success');
     await refreshAll();
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
