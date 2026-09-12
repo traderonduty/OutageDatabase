@@ -125,6 +125,7 @@
   .btn.primary:hover{ filter:brightness(1.08); }
   .btn.ghost{ border-color:transparent; color:var(--muted); }
   .btn.ghost:hover{ color:var(--text); }
+  .btn.edit-btn:hover{ background:rgba(217,164,65,.14); border-color:rgba(217,164,65,.5); color:var(--amber); }
   .btn.danger{ color:var(--red); }
 
   .toolbar{ padding:12px 24px; display:flex; gap:10px; border-bottom:1px solid var(--line); }
@@ -153,6 +154,7 @@
     white-space:nowrap;
   }
   tbody td{ padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .col-actions{ text-align:right; }
   tbody tr:hover{ background:var(--surface); }
   .mono{ font-family:var(--mono); font-size:12.5px; }
   .editable{ cursor:text; border-radius:4px; }
@@ -848,7 +850,7 @@ function renderOutages(){
 
   $('#content').innerHTML = bannerHtml + `<table>
     <thead><tr>
-      ${thSort('outages','month','Month')}${thSort('outages','date','Date')}${thSort('outages','plantAlias','Plant Alias')}${thSort('outages','resourceId','Resource ID')}${thSort('outages','technology','Technology')}${thSort('outages','outageType','Outage Type')}${thSort('outages','category','Category')}${thSort('outages','dateOut','Date Out')}${thSort('outages','dateIn','Date In')}${thSort('outages','status','Status')}${thSort('outages','soAdvisory','SO Advisory')}<th></th>
+      ${thSort('outages','month','Month')}${thSort('outages','date','Date')}${thSort('outages','plantAlias','Plant Alias')}${thSort('outages','resourceId','Resource ID')}${thSort('outages','technology','Technology')}${thSort('outages','outageType','Outage Type')}${thSort('outages','category','Category')}${thSort('outages','dateOut','Date Out')}${thSort('outages','dateIn','Date In')}${thSort('outages','status','Status')}${thSort('outages','soAdvisory','SO Advisory')}<th class="col-actions"></th>
     </tr></thead>
     <tbody>${pageRows.map(r => outageRow(r, r.status==='Ongoing' && dupIds.includes(r.resourceId))).join('')}</tbody>
   </table>${paginationControls('outages', page, totalPages)}`;
@@ -878,7 +880,7 @@ function outageRow(r, isDuplicate){
     <td class="mono">${fmt(r.dateIn)}</td>
     <td><span class="badge ${statusClass}">${r.status}</span>${ongoingDaysHtml}</td>
     <td class="msg-cell">${esc(r.soAdvisory)}</td>
-    <td><button class="btn ghost" onclick="openAddOutage(${r.row})">Edit</button></td>
+    <td class="col-actions"><button class="btn ghost edit-btn" onclick="openAddOutage(${r.row})">Edit</button></td>
   </tr>`;
 }
 
@@ -1067,13 +1069,13 @@ function renderPlants(){
   const { pageRows, totalPages, page } = paginate('plants', rows);
 
   $('#content').innerHTML = `<table>
-    <thead><tr>${thSort('plants','alias','Alias (as in SO Advisory)')}${thSort('plants','resourceId','Resource ID')}${thSort('plants','capacity','Capacity (MW)')}${thSort('plants','region','Region')}<th></th></tr></thead>
+    <thead><tr>${thSort('plants','alias','Alias (as in SO Advisory)')}${thSort('plants','resourceId','Resource ID')}${thSort('plants','capacity','Capacity (MW)')}${thSort('plants','region','Region')}<th class="col-actions"></th></tr></thead>
     <tbody>${pageRows.map(p=>`<tr>
       <td>${esc(p.alias)}</td>
       <td class="mono">${esc(p.resourceId)}</td>
       <td class="mono">${p.capacity||'—'}</td>
       <td>${esc(p.region)||'—'}</td>
-      <td><button class="btn ghost" onclick="openAddPlant(${p.row})">Edit</button></td>
+      <td class="col-actions"><button class="btn ghost edit-btn" onclick="openAddPlant(${p.row})">Edit</button></td>
     </tr>`).join('')}</tbody>
   </table>
   ${paginationControls('plants', page, totalPages)}`;
