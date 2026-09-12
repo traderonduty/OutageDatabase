@@ -987,6 +987,19 @@ function openAddOutage(row){
     </div>`;
   $('#overlay').classList.add('show');
 }
+// Finds an existing row that's likely the exact same event — same
+// Resource ID and either the same Date Out (for a new OUT-type entry) or
+// same Date In with no Date Out (for a pure restoration entry). Used to
+// warn before manually creating a true duplicate, mirroring the automated
+// builder's exact-timestamp duplicate skip.
+function findExactDuplicate(resourceId, dateOut, dateIn, excludeRow){
+  return dataCache.outages.find(o => {
+    if(o.resourceId !== resourceId || o.row === excludeRow) return false;
+    if(dateOut) return o.dateOut && new Date(o.dateOut).getTime() === new Date(dateOut).getTime();
+    if(dateIn) return !o.dateOut && o.dateIn && new Date(o.dateIn).getTime() === new Date(dateIn).getTime();
+    return false;
+  });
+}
 async function submitOutage(row){
   const data = {
     plantAlias:$('#f_plantAlias').value, resourceId:$('#f_resourceId').value,
@@ -1000,16 +1013,58 @@ async function submitOutage(row){
   if(data.dateOut && data.dateIn && data.status === 'Ongoing'){
     data.status = 'Restored';
   }
+
+  const existing = row ? dataCache.outages.find(o => o.row === row) : null;
+  // Only flag as a NEW Ongoing-conflict if this edit actually changes
+  // something — the same row already being Ongoing for the same Resource
+  // ID isn't a new conflict, so routine edits (Category, Technology, etc.)
+  // to an already-known duplicate don't nag on every save.
+  const wasAlreadyThisConflict = existing && existing.status === 'Ongoing' && existing.resourceId === data.resourceId;
+  const conflicts = (data.status === 'Ongoing' && !wasAlreadyThisConflict)
+    ? dataCache.outages.filter(o => o.resourceId === data.resourceId && o.status === 'Ongoing' && o.row !== row)
+    : [];
+
   try{
+    if(conflicts.length){
+      const list = conflicts.map(o => `• Row ${o.row} — Date Out ${fmt(o.dateOut)}`).join('\n');
+      const proceed = confirm(
+        `${data.resourceId} already has ${conflicts.length} Ongoing outage${conflicts.length===1?'':'s'} on record:\n\n${list}\n\n` +
+        `Saving this as Ongoing will delete ${conflicts.length===1?'that entry':'those entries'} and treat this as the current outage instead. Continue?`
+      );
+      if(!proceed) return;
+    }else if(data.status !== 'Ongoing'){
+      const exactDup = findExactDuplicate(data.resourceId, data.dateOut, data.dateIn, row);
+      if(exactDup){
+        const proceed = confirm(
+          `${data.resourceId} already has a record with this exact date (Row ${exactDup.row}).\n\nThis looks like it might already be logged. Save anyway?`
+        );
+        if(!proceed) return;
+      }
+    }
+
     if(row) await apiPost('updateOutage', { row, data });
     else await apiPost('addOutage', { data });
+
     let closedCount = 0;
+    let deletedConflictCount = 0;
     if(data.status === 'Restored' && data.dateIn){
       closedCount = await closeOtherOngoingDuplicates(data.resourceId, data.dateIn, row || null, data.dateOut);
+    }else if(conflicts.length){
+      // Delete sequentially, highest row number first — see the same
+      // note in submitResolve for why order matters here.
+      const sortedDesc = [...conflicts].sort((a,b) => b.row - a.row);
+      for(const o of sortedDesc){
+        await apiPost('deleteOutage', { row: o.row });
+      }
+      deletedConflictCount = conflicts.length;
     }
+
     closeModal();
     const base = row ? 'Record updated' : 'Record added';
-    toast(closedCount ? `${base} · closed ${closedCount} other Ongoing duplicate${closedCount===1?'':'s'}` : base, 'success');
+    let msg = base;
+    if(closedCount) msg = `${base} · closed ${closedCount} other Ongoing duplicate${closedCount===1?'':'s'}`;
+    else if(deletedConflictCount) msg = `${base} · replaced ${deletedConflictCount} stale Ongoing entr${deletedConflictCount===1?'y':'ies'}`;
+    toast(msg, 'success');
     await refreshAll();
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
@@ -1398,6 +1453,17 @@ async function submitResolve(row){
           await apiPost('deleteOutage', { row: o.row });
         }
         deletedStaleCount = conflicts.length;
+      }else{
+        // No open conflict — separately check whether this looks like an
+        // exact re-log of something already on record (e.g. resolving the
+        // same Needs Review item twice by mistake).
+        const exactDup = findExactDuplicate(data.resourceId, data.dateOut, data.dateIn, null);
+        if(exactDup){
+          const proceed = confirm(
+            `${data.resourceId} already has a record with this exact date (Row ${exactDup.row}).\n\nThis looks like it might already be logged. Resolve anyway?`
+          );
+          if(!proceed) return;
+        }
       }
       await apiPost('resolveReview', { reviewRow: row, data });
     }
