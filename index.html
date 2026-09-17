@@ -195,12 +195,14 @@
   .derated-date-label{
     display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted);
   }
-  .date-input-wrap{ position:relative; display:inline-flex; align-items:center; }
-  .date-input-wrap input[type="date"]{
+  .date-input-wrap{ position:relative; display:inline-flex; align-items:center; width:100%; }
+  .date-input-wrap input[type="date"],
+  .date-input-wrap input[type="datetime-local"]{
     background:var(--bg); border:1px solid var(--line); color:var(--text);
-    padding:6px 34px 6px 10px; border-radius:6px; font-size:13px; font-family:var(--sans);
+    padding:6px 34px 6px 10px; border-radius:6px; font-size:13px; font-family:var(--sans); width:100%;
   }
-  .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator{
+  .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator,
+  .date-input-wrap input[type="datetime-local"]::-webkit-calendar-picker-indicator{
     opacity:0; position:absolute; right:0; top:0; width:100%; height:100%; margin:0; cursor:pointer;
   }
   .date-input-icon{
@@ -943,8 +945,8 @@ function openAddOutage(row){
       </div>
     </div>
     <div class="row2">
-      <div class="field"><label>Date out</label><input type="datetime-local" lang="en-GB" id="f_dateOut" value="${(existing?.dateOut||'').slice(0,16)}"></div>
-      <div class="field"><label>Date in</label><input type="datetime-local" lang="en-GB" id="f_dateIn" value="${(existing?.dateIn||'').slice(0,16)}"></div>
+      <div class="field"><label>Date out</label>${dateTimeInputHtml('f_dateOut', (existing?.dateOut||'').slice(0,16))}</div>
+      <div class="field"><label>Date in</label>${dateTimeInputHtml('f_dateIn', (existing?.dateIn||'').slice(0,16))}</div>
     </div>
     <div class="field"><label>SO Advisory / notes</label><textarea id="f_soAdvisory" placeholder="Manually entered">${esc(existing?.soAdvisory||'')}</textarea></div>
     <div class="modal-actions">
@@ -1281,8 +1283,8 @@ function openResolve(row){
       </div>
     </div>
     <div class="row2">
-      <div class="field"><label>Date out</label><input type="datetime-local" lang="en-GB" id="r_dateOut"></div>
-      <div class="field"><label>Date in</label><input type="datetime-local" lang="en-GB" id="r_dateIn"></div>
+      <div class="field"><label>Date out</label>${dateTimeInputHtml('r_dateOut')}</div>
+      <div class="field"><label>Date in</label>${dateTimeInputHtml('r_dateIn')}</div>
     </div>
     <div class="checkbox-field">
       <input type="checkbox" id="r_addToMapping" checked onchange="toggleResolveMappingFields()">
@@ -1432,6 +1434,17 @@ async function submitResolve(row){
 // ---------- helpers ----------
 function emptyState(msg){ return `<div class="empty"><div class="big">${msg}</div></div>`; }
 function esc(v){ return (v==null?'':String(v)).replace(/'/g,"&#39;").replace(/"/g,'&quot;'); }
+function dateTimeInputHtml(id, value){
+  return `<span class="date-input-wrap">
+    <input type="datetime-local" lang="en-GB" id="${id}" value="${esc(value||'')}">
+    <svg class="date-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+      <line x1="16" y1="2" x2="16" y2="6"></line>
+      <line x1="8" y1="2" x2="8" y2="6"></line>
+      <line x1="3" y1="10" x2="21" y2="10"></line>
+    </svg>
+  </span>`;
+}
 function fmt(iso){
   if(!iso) return '—';
   const d = new Date(iso);
