@@ -478,9 +478,37 @@ function toast(msg, type){
 }
 
 // ---------- API ----------
-async function apiGet(action){
-  const res = await fetch(`${WEBAPP_URL}?action=${action}`);
-  const json = await res.json();
+// Retries automatically on a transient failure -- most commonly Google
+// returning its own HTML error page (a quota hiccup, a brief server
+// blip) instead of our script's JSON, which shows up as a JSON parse
+// error even though nothing is actually broken. Safe to retry here
+// specifically because GET requests never change any data — a second
+// attempt can't cause any harm, unlike retrying a write.
+async function apiGet(action, attempt){
+  attempt = attempt || 0;
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 900;
+  let text;
+  try{
+    const res = await fetch(`${WEBAPP_URL}?action=${action}`);
+    text = await res.text();
+  }catch(networkErr){
+    if(attempt < MAX_RETRIES){
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
+      return apiGet(action, attempt + 1);
+    }
+    throw networkErr;
+  }
+  let json;
+  try{
+    json = JSON.parse(text);
+  }catch(parseErr){
+    if(attempt < MAX_RETRIES){
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
+      return apiGet(action, attempt + 1);
+    }
+    throw new Error('Server returned an unexpected response (not JSON) — this usually clears up if you try again in a moment.');
+  }
   if(json.error) throw new Error(json.error);
   return json;
 }
