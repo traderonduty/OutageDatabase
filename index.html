@@ -649,12 +649,38 @@ async function refreshSome(sources){
     showLoading(false);
   }
 }
+// Plant Mapping and the Technology lookup are the two largest datasets
+// (1,000+ and 500+ rows) but aren't needed for the default Outages view —
+// only for the Plant Mapping tab itself and the Resource ID suggestions
+// in the Add/Edit Outage, Add Plant, and Resolve modals. Deferring them
+// until one of those is actually used keeps every initial load and every
+// full refresh lighter, without losing anything — they're fetched once,
+// on first need, and cached from then on.
+let plantsLoaded = false;
+let technologyLoaded = false;
+async function ensurePlantsLoaded(){
+  if(plantsLoaded) return;
+  await refreshSome(['plants']);
+  plantsLoaded = true;
+}
+async function ensureTechnologyLoaded(){
+  if(technologyLoaded) return;
+  await refreshSome(['technology']);
+  technologyLoaded = true;
+}
 async function refreshAll(){
-  return refreshSome(['outages', 'plants', 'review', 'technology', 'derated']);
+  // Always refresh the lightweight, always-relevant sources. Plant
+  // Mapping and Technology are only included if they've already been
+  // loaded once this session — the reload button refreshes what you've
+  // actually used, it doesn't force-load things you haven't touched yet.
+  const sources = ['outages', 'review', 'derated'];
+  if(plantsLoaded) sources.push('plants');
+  if(technologyLoaded) sources.push('technology');
+  return refreshSome(sources);
 }
 
 // ---------- nav ----------
-$$('.nav button').forEach(btn => btn.onclick = () => {
+$$('.nav button').forEach(btn => btn.onclick = async () => {
   $$('.nav button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   currentView = btn.dataset.view;
@@ -662,6 +688,7 @@ $$('.nav button').forEach(btn => btn.onclick = () => {
   $('#searchBox').value='';
   $('.search-wrap').classList.remove('has-text');
   updateOutagesCountBubble();
+  if(currentView === 'plants') await ensurePlantsLoaded();
   render();
 });
 $('#searchBox').addEventListener('input', e => {
@@ -976,7 +1003,8 @@ function autofillOutageTechnology(val){
   const tech = technologyByUpper[val.trim().toUpperCase()];
   if(tech) $('#f_technology').value = tech;
 }
-function openAddOutage(row){
+async function openAddOutage(row){
+  await Promise.all([ensurePlantsLoaded(), ensureTechnologyLoaded()]);
   const existing = row ? dataCache.outages.find(o=>o.row===row) : null;
   outageTechnologyAutoLock = false;
   const resourceIds = [...new Set([...dataCache.plants.map(p=>p.resourceId), ...Object.keys(dataCache.technology||{})].filter(Boolean))].sort();
@@ -1146,7 +1174,8 @@ function renderPlants(){
   </table>
   ${paginationControls('plants', page, totalPages)}`;
 }
-function openAddPlant(row){
+async function openAddPlant(row){
+  await Promise.all([ensurePlantsLoaded(), ensureTechnologyLoaded()]);
   const existing = row ? dataCache.plants.find(p => p.row === row) : null;
   const resourceIds = [...new Set([...dataCache.plants.map(p=>p.resourceId), ...Object.keys(dataCache.technology||{})].filter(Boolean))].sort();
   plantRegionAutoLock = !!existing;
@@ -1323,7 +1352,8 @@ function copyDeratedRegion(btn, key){
     fallbackCopy(text, done);
   }
 }
-function openResolve(row){
+async function openResolve(row){
+  await Promise.all([ensurePlantsLoaded(), ensureTechnologyLoaded()]);
   const item = dataCache.review.find(r=>r.row===row);
   resolveTechnologyAutoLock = false;
   resolveRegionAutoLock = false;
