@@ -546,7 +546,7 @@ async function runBuilder(){
     if(result.flaggedForReview) parts.push(`${result.flaggedForReview} flagged for review`);
     const summary = parts.length ? parts.join(' · ') : (result.message || 'No new advisories to process.');
     toast(summary, 'success');
-    await refreshAll();
+    await refreshSome(['outages', 'review']);
   }catch(e){
     toast('Builder failed: ' + e.message, 'error');
   }finally{
@@ -556,28 +556,61 @@ async function runBuilder(){
   }
 }
 
-async function refreshAll(){
+// Fetches only the data sources actually needed (any of 'outages',
+// 'plants', 'review', 'technology', 'derated'), instead of always
+// re-pulling everything. As Plant Mapping and the Technology lookup have
+// grown past 1,000 rows, re-fetching them after every single Outages edit
+// or Resolve action was adding real, unnecessary latency to something
+// that hadn't actually changed. refreshAll() below is just this called
+// with every source, for the cases that genuinely need it all (initial
+// load, reconnecting, the manual reload button).
+async function refreshSome(sources){
   if(!WEBAPP_URL) return;
   showLoading(true);
   try{
-    const [outages, plants, review, technology, derated] = await Promise.all([
-      apiGet('getOutages'), apiGet('getPlants'), apiGet('getReview'), apiGet('getTechnology'), apiGet('getDeratedPlants')
-    ]);
-    // Data consistency safety net: any row that already has both Date Out
-    // and Date In but is still marked Ongoing (e.g. edited directly in the
-    // Sheet, not through this tool) gets silently corrected to Restored.
-    const toFix = outages.filter(o => o.dateOut && o.dateIn && o.status === 'Ongoing');
-    if(toFix.length){
-      await Promise.all(toFix.map(o => apiPost('updateOutage', { row:o.row, data:{ status:'Restored' } })));
-      toFix.forEach(o => { o.status = 'Restored'; });
+    const fetches = {};
+    if(sources.includes('outages')) fetches.outages = apiGet('getOutages');
+    if(sources.includes('plants')) fetches.plants = apiGet('getPlants');
+    if(sources.includes('review')) fetches.review = apiGet('getReview');
+    if(sources.includes('technology')) fetches.technology = apiGet('getTechnology');
+    if(sources.includes('derated')) fetches.derated = apiGet('getDeratedPlants');
+
+    const keys = Object.keys(fetches);
+    const results = await Promise.all(keys.map(k => fetches[k]));
+    const resultMap = {};
+    keys.forEach((k, i) => { resultMap[k] = results[i]; });
+
+    if('outages' in resultMap){
+      const outages = resultMap.outages;
+      // Data consistency safety net: any row that already has both Date
+      // Out and Date In but is still marked Ongoing (e.g. edited directly
+      // in the Sheet, not through this tool) gets silently corrected.
+      const toFix = outages.filter(o => o.dateOut && o.dateIn && o.status === 'Ongoing');
+      if(toFix.length){
+        await Promise.all(toFix.map(o => apiPost('updateOutage', { row:o.row, data:{ status:'Restored' } })));
+        toFix.forEach(o => { o.status = 'Restored'; });
+      }
+      dataCache.outages = outages;
+      updateOutagesCountBubble();
     }
-    dataCache = { outages, plants, review, technology, derated };
-    technologyByUpper = {};
-    Object.entries(technology || {}).forEach(([id, tech]) => { technologyByUpper[id.toUpperCase()] = tech; });
+    if('plants' in resultMap){
+      dataCache.plants = resultMap.plants;
+      $('#countPlants').textContent = resultMap.plants.length;
+    }
+    if('review' in resultMap){
+      dataCache.review = resultMap.review;
+      $('#countReview').textContent = resultMap.review.length;
+    }
+    if('technology' in resultMap){
+      dataCache.technology = resultMap.technology;
+      technologyByUpper = {};
+      Object.entries(resultMap.technology || {}).forEach(([id, tech]) => { technologyByUpper[id.toUpperCase()] = tech; });
+    }
+    if('derated' in resultMap){
+      dataCache.derated = resultMap.derated;
+    }
+
     setConnStatus('live');
-    updateOutagesCountBubble();
-    $('#countPlants').textContent = plants.length;
-    $('#countReview').textContent = review.length;
     lastRefreshedAt = Date.now();
     updateLastRefreshedText();
     render();
@@ -587,6 +620,9 @@ async function refreshAll(){
   }finally{
     showLoading(false);
   }
+}
+async function refreshAll(){
+  return refreshSome(['outages', 'plants', 'review', 'technology', 'derated']);
 }
 
 // ---------- nav ----------
@@ -1033,7 +1069,7 @@ async function submitOutage(row){
     if(closedCount) msg = `${base} · closed ${closedCount} other Ongoing duplicate${closedCount===1?'':'s'}`;
     else if(deletedConflictCount) msg = `${base} · replaced ${deletedConflictCount} stale Ongoing entr${deletedConflictCount===1?'y':'ies'}`;
     toast(msg, 'success');
-    await refreshAll();
+    await refreshSome(['outages']);
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
 
@@ -1143,7 +1179,7 @@ async function submitPlant(row){
     else await apiPost('addPlant', { data });
     closeModal();
     toast(row ? 'Plant updated' : 'Plant added', 'success');
-    await refreshAll();
+    await refreshSome(['plants']);
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
 
@@ -1412,6 +1448,7 @@ async function submitResolve(row){
       }
       await apiPost('resolveReview', { reviewRow: row, data });
     }
+    let plantAdded = false;
     if($('#r_addToMapping').checked){
       const aliasNorm = data.plantAlias.trim().toLowerCase();
       const alreadyMapped = dataCache.plants.some(p => (p.alias||'').trim().toLowerCase() === aliasNorm);
@@ -1420,6 +1457,7 @@ async function submitResolve(row){
           alias: data.plantAlias, resourceId: data.resourceId,
           capacity: $('#r_capacity').value, region: $('#r_region').value
         }});
+        plantAdded = true;
       }
     }
     closeModal();
@@ -1427,7 +1465,7 @@ async function submitResolve(row){
     if(closedCount) msg = `Closed ${closedCount} Ongoing outage${closedCount===1?'':'s'}`;
     else if(deletedStaleCount) msg = `Resolved · replaced ${deletedStaleCount} stale Ongoing entr${deletedStaleCount===1?'y':'ies'}`;
     toast(msg, 'success');
-    await refreshAll();
+    await refreshSome(plantAdded ? ['outages', 'review', 'plants'] : ['outages', 'review']);
   }catch(e){ toast('Failed: ' + e.message, 'error'); }
 }
 
