@@ -572,6 +572,7 @@ async function runBuilder(){
     if(result.corrected) parts.push(`${result.corrected} corrected`);
     if(result.duplicatesSkipped) parts.push(`${result.duplicatesSkipped} duplicate${result.duplicatesSkipped===1?'':'s'} skipped`);
     if(result.staleOpenReplaced) parts.push(`${result.staleOpenReplaced} stale-open replaced`);
+    if(result.olderOutSkipped) parts.push(`${result.olderOutSkipped} older outage${result.olderOutSkipped===1?'':'s'} skipped`);
     if(result.flaggedForReview) parts.push(`${result.flaggedForReview} flagged for review`);
     const summary = parts.length ? parts.join(' · ') : (result.message || 'No new advisories to process.');
     toast(summary, 'success');
