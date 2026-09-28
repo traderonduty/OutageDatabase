@@ -1054,6 +1054,48 @@ async function openAddOutage(row){
 // same Date In with no Date Out (for a pure restoration entry). Used to
 // warn before manually creating a true duplicate, mirroring the automated
 // builder's exact-timestamp duplicate skip.
+// Finds a restoration-only row for this Resource ID (Date In filled, no
+// Date Out — typically "Restored (no prior OUT found)") that this outage
+// is the missing first half of: its Date In must come AFTER this Date
+// Out, and nothing else for this unit may have happened in between (no
+// other trip or restoration). If several qualify, the earliest one after
+// this Date Out is used. Returns null when there's no safe match.
+function findOrphanRestoration(resourceId, dateOut, excludeRow){
+  const outT = new Date(dateOut).getTime();
+  if(isNaN(outT)) return null;
+  const unitRows = dataCache.outages.filter(o => o.resourceId === resourceId && o.row !== excludeRow);
+  const candidates = unitRows
+    .filter(o => !o.dateOut && o.dateIn && new Date(o.dateIn).getTime() >= outT)
+    .sort((a,b) => new Date(a.dateIn) - new Date(b.dateIn));
+  if(!candidates.length) return null;
+  const orphan = candidates[0];
+  const inT = new Date(orphan.dateIn).getTime();
+  const between = t => !isNaN(t) && t > outT && t < inT;
+  const somethingInBetween = unitRows.some(o => o !== orphan &&
+    (between(new Date(o.dateOut).getTime()) || between(new Date(o.dateIn).getTime())));
+  return somethingInBetween ? null : orphan;
+}
+// Completes the orphan restoration row with this outage's details so the
+// two halves become one closed outage, instead of adding a separate row.
+async function pairWithOrphanRestoration(orphan, d){
+  const out = new Date(d.dateOut);
+  const update = {
+    dateOut: d.dateOut,
+    date: d.dateOut,
+    month: out.toLocaleString('en-US', { month: 'long' }),
+    status: 'Restored'
+  };
+  if(d.plantAlias) update.plantAlias = d.plantAlias;
+  // Technology is left alone: the row's Resource ID doesn't change, and
+  // column E is driven by the Technology lookup formula.
+  if(d.category) update.category = d.category;
+  if(d.outageType) update.outageType = d.outageType;
+  // The row should read like a normal closed outage: its advisory is the
+  // outage message, same as rows the builder opens and later closes.
+  if(d.soAdvisory) update.soAdvisory = d.soAdvisory;
+  if(d.advisoryRow) update.advisoryRow = d.advisoryRow;
+  await apiPost('updateOutage', { row: orphan.row, data: update });
+}
 function findExactDuplicate(resourceId, dateOut, dateIn, excludeRow){
   return dataCache.outages.find(o => {
     if(o.resourceId !== resourceId || o.row === excludeRow) return false;
@@ -1077,6 +1119,24 @@ async function submitOutage(row){
   }
 
   const existing = row ? dataCache.outages.find(o => o.row === row) : null;
+
+  // New record with only a Date Out that completes an existing
+  // restoration-only row ("Restored (no prior OUT found)") — fill in that
+  // row instead of adding a separate Ongoing one. Only for new records;
+  // editing an existing row keeps its normal behavior.
+  if(!row && data.dateOut && !data.dateIn){
+    const orphan = findOrphanRestoration(data.resourceId, data.dateOut, null);
+    if(orphan){
+      try{
+        await pairWithOrphanRestoration(orphan, data);
+        closeModal();
+        toast(`Paired with the existing restoration (row ${orphan.row}) — outage now complete`, 'success');
+        await refreshSome(['outages']);
+      }catch(e){ toast('Failed: ' + e.message, 'error'); }
+      return;
+    }
+  }
+
   // Only flag as a NEW Ongoing-conflict if this edit actually changes
   // something — the same row already being Ongoing for the same Resource
   // ID isn't a new conflict, so routine edits (Category, Technology, etc.)
@@ -1463,12 +1523,19 @@ async function submitResolve(row){
 
     let closedCount = 0;
     let deletedStaleCount = 0;
+    let pairedOrphan = null;
 
     if(openMatches.length){
       await Promise.all(openMatches.map(o =>
         apiPost('updateOutage', { row: o.row, data: { dateIn: data.dateIn, status: 'Restored' } })
       ));
       closedCount = openMatches.length;
+      await apiPost('deleteReview', { reviewRow: row });
+    }else if(data.dateOut && !data.dateIn && (pairedOrphan = findOrphanRestoration(data.resourceId, data.dateOut, null))){
+      // This outage is the missing first half of a restoration already on
+      // record as "Restored (no prior OUT found)" — complete that row
+      // instead of adding a separate Ongoing row that would stay open.
+      await pairWithOrphanRestoration(pairedOrphan, { ...data, advisoryRow: item.advisoryRow });
       await apiPost('deleteReview', { reviewRow: row });
     }else{
       // This is being resolved as a NEW outage (Date Out filled) — check
@@ -1523,6 +1590,7 @@ async function submitResolve(row){
     closeModal();
     let msg = 'Resolved and added to Outage Database';
     if(closedCount) msg = `Closed ${closedCount} Ongoing outage${closedCount===1?'':'s'}`;
+    else if(pairedOrphan) msg = `Paired with the existing restoration (row ${pairedOrphan.row}) — outage now complete`;
     else if(deletedStaleCount) msg = `Resolved · replaced ${deletedStaleCount} stale Ongoing entr${deletedStaleCount===1?'y':'ies'}`;
     toast(msg, 'success');
     await refreshSome(plantAdded ? ['outages', 'review', 'plants'] : ['outages', 'review']);
