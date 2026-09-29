@@ -185,6 +185,15 @@
   }
   .copy-btn:hover{ opacity:1; border-color:var(--amber); color:var(--amber); }
   .copy-btn svg{ width:11px; height:11px; }
+  /* Resolve + trash share one shrink-wrapped cell, so the gap between the
+     Reason text and Resolve matches the gap between Resolve and the trash. */
+  .review-actions{ width:1%; white-space:nowrap; padding-left:24px; }
+  .review-actions-inner{ display:flex; align-items:center; gap:24px; }
+  .btn.resolve-btn{
+    background:rgba(217,164,65,.12); border:1px solid rgba(217,164,65,.4); color:var(--amber);
+    font-weight:600; transition:background .15s ease, border-color .15s ease;
+  }
+  .btn.resolve-btn:hover{ background:rgba(217,164,65,.2); border-color:rgba(217,164,65,.6); }
   .trash-btn{
     background:none; border:1px solid transparent; color:var(--muted); border-radius:6px;
     width:30px; height:30px; padding:0; display:inline-flex; align-items:center; justify-content:center;
@@ -1349,7 +1358,7 @@ function renderReview(){
   if(!rows.length){ $('#content').innerHTML = emptyState('Nothing needs review right now.'); return; }
 
   $('#content').innerHTML = `<table>
-    <thead><tr>${thSort('review','timeMessage','Time')}${thSort('review','region','Region')}<th>Message</th><th></th>${thSort('review','reason','Reason')}<th></th><th></th></tr></thead>
+    <thead><tr>${thSort('review','timeMessage','Time')}${thSort('review','region','Region')}<th>Message</th><th></th>${thSort('review','reason','Reason')}<th></th></tr></thead>
     <tbody>${rows.map(r=>`<tr>
       <td class="mono">${fmt(r.timeMessage)}</td>
       <td>${esc(r.region)}</td>
@@ -1358,10 +1367,12 @@ function renderReview(){
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
       </button></td>
       <td class="msg-cell"><span class="badge review">flagged</span> ${esc(r.reason)}</td>
-      <td><button class="btn ghost" onclick="openResolve(${r.row})">Resolve</button></td>
-      <td><button class="trash-btn" title="Delete this item" onclick="deleteReviewItem(${r.row})">
+      <td class="review-actions"><div class="review-actions-inner">
+        <button class="btn resolve-btn" onclick="openResolve(${r.row})">Resolve</button>
+        <button class="trash-btn" title="Delete this item" onclick="deleteReviewItem(${r.row})">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
-      </button></td>
+      </button>
+      </div></td>
     </tr>`).join('')}</tbody>
   </table>`;
 }
