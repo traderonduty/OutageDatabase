@@ -209,6 +209,16 @@
   }
   .copy-preview-table td{ padding:5px 12px; border-bottom:1px solid var(--line); }
 
+  .date-range{ display:flex; align-items:center; gap:8px; }
+  .date-range-label, .date-range-sep{ font-size:12px; color:var(--muted); white-space:nowrap; }
+  .toolbar .date-range .date-input-wrap{ width:auto; }
+  .toolbar .date-range input[type="date"]{ flex:none; max-width:none; width:150px; }
+  .date-range-clear{
+    background:none; border:none; color:var(--muted); font-size:17px; line-height:1; cursor:pointer;
+    width:24px; height:24px; border-radius:4px; display:none; align-items:center; justify-content:center;
+  }
+  .date-range-clear:hover{ color:var(--amber); background:rgba(255,255,255,.06); }
+  .date-range.has-range .date-range-clear{ display:flex; }
   .derated-hint{
     display:flex; align-items:center; align-self:center; gap:6px; font-size:12px; color:var(--muted); margin-right:14px;
   }
@@ -373,6 +383,13 @@
       <button class="search-clear" id="searchClear" title="Clear search" onclick="clearSearch()">×</button>
     </div>
     <select id="filterSelect"></select>
+    <div class="date-range" id="dateRange" style="display:none">
+      <span class="date-range-label">Date Out</span>
+      <span class="date-input-wrap"><input type="date" id="dateFrom" title="From"><svg class="date-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></span>
+      <span class="date-range-sep">to</span>
+      <span class="date-input-wrap"><input type="date" id="dateTo" title="To"><svg class="date-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></span>
+      <button class="date-range-clear" id="dateRangeClear" title="Clear date range" onclick="clearDateRange()">×</button>
+    </div>
   </div>
   <div class="content" id="content">
     <div class="empty">
@@ -548,9 +565,18 @@ async function apiPost(action, payload){
     body: JSON.stringify({ action, ...payload })
   });
   const json = await res.json();
-  if(json.error) throw new Error(json.error);
+  if(json.error){
+    // The row moved since the page loaded — reload so the next try uses current row numbers.
+    if(json.code === 'ROW_CHANGED') refreshAll();
+    throw new Error(json.error);
+  }
   return json;
 }
+// What each row is expected to contain, sent with every row-targeted write
+// so the server can refuse if that row number now holds a different record.
+function outageIdentity(o){ return { resourceId: o.resourceId || '', dateOut: o.dateOut || '', dateIn: o.dateIn || '' }; }
+function plantIdentity(p){ return { alias: p.alias || '', resourceId: p.resourceId || '' }; }
+function reviewIdentity(r){ return { message: r.message || '' }; }
 
 function showLoading(isLoading){
   $('#loadingBar').classList.toggle('active', isLoading);
@@ -645,7 +671,7 @@ async function refreshSome(sources){
       // in the Sheet, not through this tool) gets silently corrected.
       const toFix = outages.filter(o => o.dateOut && o.dateIn && o.status === 'Ongoing');
       if(toFix.length){
-        await Promise.all(toFix.map(o => apiPost('updateOutage', { row:o.row, data:{ status:'Restored' } })));
+        await Promise.all(toFix.map(o => apiPost('updateOutage', { row:o.row, data:{ status:'Restored' }, expect: outageIdentity(o) })));
         toFix.forEach(o => { o.status = 'Restored'; });
       }
       dataCache.outages = outages;
@@ -736,6 +762,23 @@ function clearSearch(){
   box.focus();
   currentPage[currentView] = 1;
   render();
+}
+let dateFrom = '';
+let dateTo = '';
+function onDateRangeChange(){
+  dateFrom = $('#dateFrom').value;
+  dateTo = $('#dateTo').value;
+  $('#dateRange').classList.toggle('has-range', !!(dateFrom || dateTo));
+  currentPage.outages = 1;
+  showDuplicatesOnly = false;
+  render();
+}
+$('#dateFrom').addEventListener('change', onDateRangeChange);
+$('#dateTo').addEventListener('change', onDateRangeChange);
+function clearDateRange(){
+  $('#dateFrom').value = '';
+  $('#dateTo').value = '';
+  onDateRangeChange();
 }
 $('#filterSelect').addEventListener('change', e => { filterValue = e.target.value; currentPage[currentView] = 1; showDuplicatesOnly = false; render(); });
 
@@ -829,6 +872,7 @@ function exportCSV(view){
 
 // ---------- render router ----------
 function render(){
+  $('#dateRange').style.display = currentView === 'outages' ? 'flex' : 'none';
   if(currentView === 'outages') renderOutages();
   else if(currentView === 'plants') renderPlants();
   else if(currentView === 'review') renderReview();
@@ -861,7 +905,7 @@ function openResourceIdCopyModal(){
   const dupeCount = rows.length - dedupedRows.length;
   $('#modalBody').innerHTML = `
     <h2>Resource ID &amp; Outage Type</h2>
-    <div class="desc">${dedupedRows.length} unique Resource ID(s) — ${esc(statusLabel)}${searchTerm ? ' · search filter active' : ''}${dupeCount ? ` · ${dupeCount} duplicate row(s) collapsed to their latest occurrence` : ''}. Copy, then paste directly into Excel.</div>
+    <div class="desc">${dedupedRows.length} unique Resource ID(s) — ${esc(statusLabel)}${searchTerm ? ' · search filter active' : ''}${(dateFrom || dateTo) ? ' · date range active' : ''}${dupeCount ? ` · ${dupeCount} duplicate row(s) collapsed to their latest occurrence` : ''}. Copy, then paste directly into Excel.</div>
     <div class="copy-table-wrap">
       <table class="copy-preview-table">
         <thead><tr><th>Resource_ID</th><th>Outage_Type</th></tr></thead>
@@ -891,6 +935,20 @@ function getCurrentOutageRows(){
   let rows = dataCache.outages;
   if(searchTerm) rows = rows.filter(r => (r.plantAlias+r.resourceId+r.soAdvisory).toLowerCase().includes(searchTerm));
   if(filterValue) rows = rows.filter(r => filterValue === 'Restored' ? r.status.startsWith('Restored') : r.status === filterValue);
+  if(dateFrom || dateTo){
+    // Matched on Date Out (Date In for restoration-only rows), inclusive of both
+    // end days. If From is after To, the two are simply treated as swapped.
+    let a = dateFrom ? new Date(dateFrom + 'T00:00').getTime() : -Infinity;
+    let b = dateTo ? new Date(dateTo + 'T23:59:59.999').getTime() : Infinity;
+    if(dateFrom && dateTo && a > b){
+      a = new Date(dateTo + 'T00:00').getTime();
+      b = new Date(dateFrom + 'T23:59:59.999').getTime();
+    }
+    rows = rows.filter(r => {
+      const t = new Date(r.dateOut || r.dateIn || r.date).getTime();
+      return !isNaN(t) && t >= a && t <= b;
+    });
+  }
   const s = sortState.outages;
   if(s.field) rows = [...rows].sort((a,b)=> compareValues(a[s.field], b[s.field], s.dir));
   else rows = [...rows].sort((a,b)=> (b.dateOut||b.dateIn||'').localeCompare(a.dateOut||a.dateIn||''));
@@ -959,7 +1017,7 @@ function renderOutages(){
     $('#viewMeta').textContent = `${rows.length} duplicate Ongoing row(s) across ${dupIds.length} Resource ID${dupIds.length===1?'':'s'}`;
   }else{
     rows = getCurrentOutageRows();
-    const isFiltered = !!(searchTerm || filterValue);
+    const isFiltered = !!(searchTerm || filterValue || dateFrom || dateTo);
     $('#viewMeta').textContent = isFiltered
       ? `${rows.length} of ${dataCache.outages.length} outage records`
       : `${dataCache.outages.length} outage records`;
@@ -1021,7 +1079,7 @@ async function closeOtherOngoingDuplicates(resourceId, dateIn, excludeRow, cutof
     new Date(o.dateOut || 0).getTime() <= cutoffTime);
   if(dupes.length){
     await Promise.all(dupes.map(o =>
-      apiPost('updateOutage', { row: o.row, data: { dateIn, status: 'Restored' } })
+      apiPost('updateOutage', { row: o.row, data: { dateIn, status: 'Restored' }, expect: outageIdentity(o) })
     ));
   }
   return dupes.length;
@@ -1122,7 +1180,7 @@ async function pairWithOrphanRestoration(orphan, d){
   // outage message, same as rows the builder opens and later closes.
   if(d.soAdvisory) update.soAdvisory = d.soAdvisory;
   if(d.advisoryRow) update.advisoryRow = d.advisoryRow;
-  await apiPost('updateOutage', { row: orphan.row, data: update });
+  await apiPost('updateOutage', { row: orphan.row, data: update, expect: outageIdentity(orphan) });
 }
 function findExactDuplicate(resourceId, dateOut, dateIn, excludeRow){
   return dataCache.outages.find(o => {
@@ -1192,7 +1250,7 @@ async function submitOutage(row){
       }
     }
 
-    if(row) await apiPost('updateOutage', { row, data });
+    if(row) await apiPost('updateOutage', { row, data, expect: outageIdentity(existing) });
     else await apiPost('addOutage', { data });
 
     let closedCount = 0;
@@ -1204,7 +1262,7 @@ async function submitOutage(row){
       // note in submitResolve for why order matters here.
       const sortedDesc = [...conflicts].sort((a,b) => b.row - a.row);
       for(const o of sortedDesc){
-        await apiPost('deleteOutage', { row: o.row });
+        await apiPost('deleteOutage', { row: o.row, expect: outageIdentity(o) });
       }
       deletedConflictCount = conflicts.length;
     }
@@ -1322,7 +1380,7 @@ async function submitPlant(row){
   };
   if(!data.alias || !data.resourceId){ toast('Alias and Resource ID are required', 'error'); return; }
   try{
-    if(row) await apiPost('updatePlant', { row, data });
+    if(row) await apiPost('updatePlant', { row, data, expect: plantIdentity(dataCache.plants.find(p => p.row === row) || {}) });
     else await apiPost('addPlant', { data });
     closeModal();
     toast(row ? 'Plant updated' : 'Plant added', 'success');
@@ -1464,7 +1522,7 @@ async function deleteReviewItem(row){
   );
   if(!proceed) return;
   try{
-    await apiPost('deleteReview', { reviewRow: row });
+    await apiPost('deleteReview', { reviewRow: row, expect: reviewIdentity(item) });
     toast('Removed from Needs Review', 'success');
     await refreshSome(['review']);
   }catch(e){ toast('Delete failed: ' + e.message, 'error'); }
@@ -1582,16 +1640,16 @@ async function submitResolve(row){
 
     if(openMatches.length){
       await Promise.all(openMatches.map(o =>
-        apiPost('updateOutage', { row: o.row, data: { dateIn: data.dateIn, status: 'Restored' } })
+        apiPost('updateOutage', { row: o.row, data: { dateIn: data.dateIn, status: 'Restored' }, expect: outageIdentity(o) })
       ));
       closedCount = openMatches.length;
-      await apiPost('deleteReview', { reviewRow: row });
+      await apiPost('deleteReview', { reviewRow: row, expect: reviewIdentity(item) });
     }else if(data.dateOut && !data.dateIn && (pairedOrphan = findOrphanRestoration(data.resourceId, data.dateOut, null))){
       // This outage is the missing first half of a restoration already on
       // record as "Restored (no prior OUT found)" — complete that row
       // instead of adding a separate Ongoing row that would stay open.
       await pairWithOrphanRestoration(pairedOrphan, { ...data, advisoryRow: item.advisoryRow });
-      await apiPost('deleteReview', { reviewRow: row });
+      await apiPost('deleteReview', { reviewRow: row, expect: reviewIdentity(item) });
     }else{
       // This is being resolved as a NEW outage (Date Out filled) — check
       // whether this Resource ID already has an Ongoing row on record.
@@ -1613,7 +1671,7 @@ async function submitResolve(row){
         // row once earlier ones have already shifted the sheet.
         const sortedDesc = [...conflicts].sort((a,b) => b.row - a.row);
         for(const o of sortedDesc){
-          await apiPost('deleteOutage', { row: o.row });
+          await apiPost('deleteOutage', { row: o.row, expect: outageIdentity(o) });
         }
         deletedStaleCount = conflicts.length;
       }else{
@@ -1628,7 +1686,7 @@ async function submitResolve(row){
           if(!proceed) return;
         }
       }
-      await apiPost('resolveReview', { reviewRow: row, data });
+      await apiPost('resolveReview', { reviewRow: row, data, expect: reviewIdentity(item) });
     }
     let plantAdded = false;
     if($('#r_addToMapping').checked){
