@@ -172,10 +172,10 @@
   .badge.review{ background:rgba(196,99,74,.15); color:var(--red); }
   .badge.planned{ background:rgba(143,163,150,.15); color:var(--muted); }
   .badge.unplanned{ background:rgba(217,164,65,.15); color:var(--amber); }
-  .resid-ongoing{ background:rgba(255,214,51,.22); color:#FFE066; font-weight:600; }
-  .resid-ongoing:hover{ background:rgba(255,214,51,.32); }
-  .resid-restored{ background:rgba(76,175,109,.22); color:#8FE0AA; font-weight:600; }
-  .resid-restored:hover{ background:rgba(76,175,109,.32); }
+  .resid-cell{ font-weight:600; white-space:nowrap; }
+  .status-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; vertical-align:middle; position:relative; top:-1px; background:transparent; }
+  .status-dot.dot-ongoing{ background:var(--amber); box-shadow:0 0 6px rgba(217,164,65,.6); }
+  .status-dot.dot-restored{ background:var(--green); }
   .resid-duplicate{ background:rgba(217,164,65,.4); color:#FFE066; font-weight:700; }
   .resid-duplicate:hover{ background:rgba(217,164,65,.5); }
   .copy-btn{
@@ -225,6 +225,14 @@
   }
   .derated-hint svg{ width:14px; height:14px; color:var(--amber); flex:none; }
   /* Instant tooltip on the date box (no delay, unlike the browser's native title tooltip). */
+  .reason-tip{ position:relative; cursor:help; border-bottom:1px dotted var(--muted); }
+  .reason-tip::after{
+    content:attr(data-tip); position:absolute; top:calc(100% + 6px); left:0; z-index:40;
+    width:320px; padding:9px 11px; border-radius:6px; font-size:12px; line-height:1.45; white-space:normal;
+    background:var(--surface-2); border:1px solid rgba(217,164,65,.5); color:var(--text);
+    box-shadow:0 6px 18px rgba(0,0,0,.35); pointer-events:none; display:none;
+  }
+  .reason-tip:hover::after{ display:block; }
   .date-tip::after{
     content:attr(data-tip); position:absolute; top:calc(100% + 8px); right:0; z-index:40;
     width:280px; padding:9px 11px; border-radius:6px; font-size:12px; line-height:1.45; white-space:normal;
@@ -1050,12 +1058,14 @@ function outageRow(r, isDuplicate){
       ongoingDaysHtml = `<span class="ongoing-days${days>=staleThreshold?' stale':''}" title="${days} day${days===1?'':'s'} since Date Out">${days}d</span>`;
     }
   }
-  const resIdClass = isDuplicate ? ' resid-duplicate' : r.status==='Ongoing' ? ' resid-ongoing' : r.status.startsWith('Restored') ? ' resid-restored' : '';
+  // Status shown as a small dot before the ID; only duplicates keep the strong amber fill.
+  const resIdClass = isDuplicate ? 'resid-duplicate' : '';
+  const dotClass = r.status === 'Ongoing' ? 'dot-ongoing' : (r.status || '').startsWith('Restored') ? 'dot-restored' : '';
   return `<tr>
     <td>${esc(r.month)}</td>
     <td>${fmt(r.date)}</td>
     <td>${esc(r.plantAlias)}</td>
-    <td class="${resIdClass}" title="${isDuplicate?'Duplicate: another Ongoing row exists for this Resource ID':''}">${esc(r.resourceId)}</td>
+    <td class="resid-cell ${resIdClass}" title="${isDuplicate?'Duplicate: another Ongoing row exists for this Resource ID':''}"><span class="status-dot ${dotClass}"></span>${esc(r.resourceId)}</td>
     <td>${esc(r.technology)||'—'}</td>
     <td><span class="badge ${typeClass}">${r.outageType||'—'}</span></td>
     <td>${esc(r.category)||'—'}</td>
@@ -1426,7 +1436,7 @@ function renderReview(){
       <td><button class="copy-btn" title="Copy message" data-msg="${esc(r.message)}" onclick="copyMessage(this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
       </button></td>
-      <td class="msg-cell"><span class="badge review">flagged</span> ${esc(r.reason)}</td>
+      <td class="msg-cell"><span class="badge review">flagged</span> <span class="reason-tip" data-tip="${esc(r.reason)}">${esc(shortReason(r.reason))}</span></td>
       <td class="review-actions"><div class="review-actions-inner">
         <button class="btn resolve-btn" onclick="openResolve(${r.row})">Resolve</button>
         <button class="trash-btn" title="Delete this item" onclick="deleteReviewItem(${r.row})">
@@ -1713,6 +1723,16 @@ async function submitResolve(row){
 }
 
 // ---------- helpers ----------
+// Short label for a Needs Review reason; the full sentence shows on hover.
+function shortReason(reason){
+  const r = String(reason || '');
+  const amb = r.match(/^Ambiguous plant alias "([^"]+)"/i);
+  if(amb) return `Ambiguous alias: ${amb[1]}`;
+  if(/^No plant alias matched/i.test(r)) return 'No alias match';
+  if(/^No OUT\/IN keyword/i.test(r)) return 'No outage/restoration keyword';
+  const first = r.split(' — ')[0];
+  return first.length > 45 ? first.slice(0, 45) + '…' : first;
+}
 function emptyState(msg){ return `<div class="empty"><div class="big">${msg}</div></div>`; }
 function esc(v){ return (v==null?'':String(v)).replace(/'/g,"&#39;").replace(/"/g,'&quot;'); }
 function dateTimeInputHtml(id, value){
