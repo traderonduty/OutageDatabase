@@ -282,6 +282,15 @@
   th.sortable{ cursor:pointer; user-select:none; }
   th.sortable:hover{ color:var(--text); }
   .sort-arrow{ margin-left:4px; color:var(--amber); font-size:10px; }
+  .stale-notice{
+    background:rgba(217,164,65,.1); border-bottom:1px solid rgba(217,164,65,.35); color:var(--amber);
+    padding:7px 24px; font-size:12px; display:none;
+  }
+  .stale-notice.show{ display:block; }
+  .stale-notice.error{ color:var(--red); background:rgba(196,99,74,.1); border-color:rgba(196,99,74,.45); }
+  body.stale-data [onclick^="openAdd"], body.stale-data [onclick^="openResolve"],
+  body.stale-data [onclick^="deleteReviewItem"], body.stale-data #runBuilderBtn,
+  body.stale-data #deratedDatePicker{ opacity:.4; pointer-events:none; }
   .loading-bar{
     position:fixed; top:0; left:0; width:100%; height:2px; overflow:hidden;
     z-index:200; opacity:0; pointer-events:none; transition:opacity .2s ease;
@@ -379,6 +388,7 @@
 </div>
 
 <div class="main">
+  <div class="stale-notice" id="staleNotice"></div>
   <div class="topbar">
     <div>
       <h1 id="viewTitle">Outage Database</h1>
@@ -440,6 +450,7 @@ async function loadSettings(){
     const saved = localStorage.getItem('outageManagerWebAppUrl');
     WEBAPP_URL = saved || DEFAULT_WEBAPP_URL;
     setConnStatus('checking', 'Connecting…');
+    loadSavedCopy();
     await refreshAll();
   }catch(e){ console.warn('Could not read saved URL:', e); }
 }
@@ -540,20 +551,31 @@ function toast(msg, type){
 // error even though nothing is actually broken. Safe to retry here
 // specifically because GET requests never change any data — a second
 // attempt can't cause any harm, unlike retrying a write.
+// Google sometimes never answers a call at all. Without a time limit the
+// page would wait forever, so a call that takes longer than this is
+// cancelled and retried.
+const GET_TIMEOUT_MS = 25000;
 async function apiGet(action, attempt){
   attempt = attempt || 0;
   const MAX_RETRIES = 2;
   const RETRY_DELAY_MS = 900;
   let text;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GET_TIMEOUT_MS);
   try{
-    const res = await fetch(`${WEBAPP_URL}?action=${action}`);
+    const res = await fetch(`${WEBAPP_URL}?action=${action}`, { signal: controller.signal });
     text = await res.text();
   }catch(networkErr){
+    const timedOut = networkErr.name === 'AbortError';
     if(attempt < MAX_RETRIES){
+      if(timedOut) setConnStatus('checking', 'Google is slow — retrying…');
       await new Promise(r => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
       return apiGet(action, attempt + 1);
     }
+    if(timedOut) throw new Error('Google Sheets did not respond after several tries. Click reload to try again.');
     throw networkErr;
+  }finally{
+    clearTimeout(timer);
   }
   let json;
   try{
@@ -569,6 +591,7 @@ async function apiGet(action, attempt){
   return json;
 }
 async function apiPost(action, payload){
+  if(showingSavedData) throw new Error('Still loading the latest data — try again once it finishes.');
   const res = await fetch(WEBAPP_URL, {
     method:'POST',
     headers:{ 'Content-Type':'text/plain;charset=utf-8' }, // avoids CORS preflight against Apps Script
@@ -663,16 +686,33 @@ async function refreshSome(sources){
   showLoading(true);
   try{
     const fetches = {};
-    if(sources.includes('outages')) fetches.outages = apiGet('getOutages');
+    // Outages + Needs Review + Derated together come back in ONE call, so
+    // the page waits on Google once instead of three times. Falls back to
+    // separate calls if the deployed Apps Script is older than this page.
+    const combined = ['outages','review','derated'].every(s => sources.includes(s));
+    let initial = null;
+    if(combined){
+      initial = await apiGet('getInitial').catch(e => {
+        if(/Unknown action/i.test(e.message)){
+          return Promise.all([apiGet('getOutages'), apiGet('getReview'), apiGet('getDeratedPlants')])
+            .then(([outages, review, derated]) => ({ outages, review, derated }));
+        }
+        throw e;
+      });
+    }
+    if(!combined && sources.includes('outages')) fetches.outages = apiGet('getOutages');
     if(sources.includes('plants')) fetches.plants = apiGet('getPlants');
-    if(sources.includes('review')) fetches.review = apiGet('getReview');
+    if(!combined && sources.includes('review')) fetches.review = apiGet('getReview');
     if(sources.includes('technology')) fetches.technology = apiGet('getTechnology');
-    if(sources.includes('derated')) fetches.derated = apiGet('getDeratedPlants');
+    if(!combined && sources.includes('derated')) fetches.derated = apiGet('getDeratedPlants');
 
     const keys = Object.keys(fetches);
     const results = await Promise.all(keys.map(k => fetches[k]));
     const resultMap = {};
     keys.forEach((k, i) => { resultMap[k] = results[i]; });
+    if(initial) Object.assign(resultMap, initial);
+    // Fresh Outages data is in — writes are safe again.
+    if('outages' in resultMap) setShowingSavedData(false);
 
     if('outages' in resultMap){
       const outages = resultMap.outages;
@@ -707,10 +747,12 @@ async function refreshSome(sources){
     setConnStatus('live');
     lastRefreshedAt = Date.now();
     updateLastRefreshedText();
+    saveCopy(resultMap);
     render();
   }catch(e){
     setConnStatus('error', e.message);
     toast('Could not load data: ' + e.message, 'error');
+    if(showingSavedData) updateStaleNotice(true);
   }finally{
     showLoading(false);
   }
@@ -734,6 +776,53 @@ async function ensureTechnologyLoaded(){
   await refreshSome(['technology']);
   technologyLoaded = true;
 }
+// ---------- saved copy (instant display while Google loads) ----------
+// The last successfully loaded Outages / Needs Review / Derated data is
+// kept in this browser. On open it's shown immediately, marked as saved
+// data, and replaced as soon as Google answers. Edits stay disabled until
+// then, so nothing is ever written based on the saved copy.
+const SAVED_COPY_KEY = 'outageManagerSavedCopy_v1';
+let showingSavedData = false;
+let savedCopyAt = null;
+function setShowingSavedData(on){
+  showingSavedData = on;
+  document.body.classList.toggle('stale-data', on);
+  updateStaleNotice(false);
+}
+function updateStaleNotice(failed){
+  const el = $('#staleNotice');
+  if(!el) return;
+  if(!showingSavedData){ el.className = 'stale-notice'; return; }
+  const mins = Math.max(0, Math.round((Date.now() - savedCopyAt) / 60000));
+  const age = mins < 1 ? 'less than a minute' : mins < 60 ? `${mins} min` : `${Math.round(mins/60)} h`;
+  el.textContent = failed
+    ? `Couldn't reach Google Sheets — showing saved data from ${age} ago. Click reload to try again.`
+    : `Showing saved data from ${age} ago — updating…`;
+  el.className = 'stale-notice show' + (failed ? ' error' : '');
+}
+function loadSavedCopy(){
+  let copy;
+  try{ copy = JSON.parse(localStorage.getItem(SAVED_COPY_KEY) || 'null'); }catch(e){ return; }
+  if(!copy || copy.url !== WEBAPP_URL || !Array.isArray(copy.outages)) return;
+  dataCache.outages = copy.outages;
+  dataCache.review = copy.review || [];
+  if(copy.derated) dataCache.derated = copy.derated;
+  $('#countReview').textContent = dataCache.review.length;
+  updateOutagesCountBubble();
+  savedCopyAt = copy.savedAt;
+  setShowingSavedData(true);
+  render();
+}
+function saveCopy(resultMap){
+  if(!('outages' in resultMap) && !('review' in resultMap) && !('derated' in resultMap)) return;
+  try{
+    localStorage.setItem(SAVED_COPY_KEY, JSON.stringify({
+      url: WEBAPP_URL, savedAt: Date.now(),
+      outages: dataCache.outages, review: dataCache.review, derated: dataCache.derated || null
+    }));
+  }catch(e){ console.warn('Could not save a local copy:', e); }
+}
+
 async function refreshAll(){
   // Always refresh the lightweight, always-relevant sources. Plant
   // Mapping and Technology are only included if they've already been
@@ -1765,7 +1854,7 @@ function updateLastRefreshedText(){
   else label = `${Math.floor(secs/3600)}h ago`;
   el.textContent = `· Updated ${label}`;
 }
-setInterval(updateLastRefreshedText, 15000);
+setInterval(() => { updateLastRefreshedText(); if(showingSavedData) updateStaleNotice($('#staleNotice').classList.contains('error')); }, 15000);
 
 loadSettings();
 </script>
