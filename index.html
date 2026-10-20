@@ -495,7 +495,7 @@ async function connectUrl(){
     setConnStatus('checking', 'Connecting…');
     await refreshAll();
   }catch(e){
-    toast('Connect failed: ' + e.message, 'error');
+    saveErrorToast('Connect failed: ', e);
     console.error(e);
   }
 }
@@ -544,11 +544,25 @@ $('#modalBody').addEventListener('pointerdown', e => {
 });
 document.addEventListener('keydown', e => { if(e.key === 'Escape') closeModal(); });
 
-function toast(msg, type){
+let toastTimer = null;
+function toast(msg, type, ms){
   const t = $('#toast');
   t.textContent = msg;
   t.className = 'toast show' + (type ? ' ' + type : '');
-  setTimeout(()=> t.classList.remove('show'), 4000);
+  clearTimeout(toastTimer); // a newer toast shouldn't be hidden early by an older one's timer
+  toastTimer = setTimeout(()=> t.classList.remove('show'), ms || 4000);
+}
+// Error toast for a failed save. When Google never replied, the save may
+// still have gone through, so instead of "Failed" (which invites a retry
+// and a possible double entry) it says to check, closes the modal, and
+// reloads the data so the table shows what actually happened.
+function saveErrorToast(prefix, e){
+  if(e && e.noReply){
+    toast(e.message, 'error', 12000);
+    if(e.closesModal !== false) closeModal();
+    return;
+  }
+  toast(prefix + e.message, 'error');
 }
 
 // ---------- API ----------
@@ -597,14 +611,46 @@ async function apiGet(action, attempt){
   if(json.error) throw new Error(json.error);
   return json;
 }
+// Saves get a time limit too. Unlike a load, a save that gets no reply is
+// NOT retried automatically — Google may have saved it anyway, and
+// sending it again could create a double entry. Instead the page reloads
+// (now and again shortly after, in case Google was still finishing) and
+// tells you to check the table before trying again. The Builder gets a
+// longer limit because a big run can legitimately take a few minutes.
+const POST_TIMEOUT_MS = 60000;
+const BUILDER_TIMEOUT_MS = 360000;
+function noReplyError(action){
+  const builder = action === 'runBuilder';
+  const err = new Error(builder
+    ? "Google didn't reply in time — the Builder may still be running. The data will reload; check before running it again."
+    : "Google didn't reply in time — this may have saved anyway. The data is reloading; check the table before trying again.");
+  err.noReply = true;
+  err.closesModal = !builder;
+  return err;
+}
 async function apiPost(action, payload){
   if(showingSavedData) throw new Error('Still loading the latest data — try again once it finishes.');
-  const res = await fetch(WEBAPP_URL, {
-    method:'POST',
-    headers:{ 'Content-Type':'text/plain;charset=utf-8' }, // avoids CORS preflight against Apps Script
-    body: JSON.stringify({ action, ...payload })
-  });
-  const json = await res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), action === 'runBuilder' ? BUILDER_TIMEOUT_MS : POST_TIMEOUT_MS);
+  let json;
+  try{
+    const res = await fetch(WEBAPP_URL, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' }, // avoids CORS preflight against Apps Script
+      body: JSON.stringify({ action, ...payload }),
+      signal: controller.signal
+    });
+    json = JSON.parse(await res.text());
+  }catch(e){
+    // Timed out, connection dropped, or Google answered with its own error
+    // page instead of our JSON — in every case we can't tell whether the
+    // save happened.
+    refreshAll();
+    setTimeout(refreshAll, 20000);
+    throw noReplyError(action);
+  }finally{
+    clearTimeout(timer);
+  }
   if(json.error){
     // The row moved since the page loaded — reload so the next try uses current row numbers.
     if(json.code === 'ROW_CHANGED') refreshAll();
@@ -696,7 +742,7 @@ async function runBuilder(){
     toast(summary, 'success');
     await refreshSome(['outages', 'review']);
   }catch(e){
-    toast('Builder failed: ' + e.message, 'error');
+    saveErrorToast('Builder failed: ', e);
   }finally{
     btn.disabled = false;
     btn.classList.remove('spinning');
@@ -1350,7 +1396,7 @@ async function submitOutage(row){
         closeModal();
         toast(`Paired with the existing restoration (row ${orphan.row}) — outage now complete`, 'success');
         await refreshSome(['outages']);
-      }catch(e){ toast('Failed: ' + e.message, 'error'); }
+      }catch(e){ saveErrorToast('Failed: ', e); }
       return;
     }
   }
@@ -1406,7 +1452,7 @@ async function submitOutage(row){
     else if(deletedConflictCount) msg = `${base} · replaced ${deletedConflictCount} stale Ongoing entr${deletedConflictCount===1?'y':'ies'}`;
     toast(msg, 'success');
     await refreshSome(['outages']);
-  }catch(e){ toast('Failed: ' + e.message, 'error'); }
+  }catch(e){ saveErrorToast('Failed: ', e); }
 }
 
 // ================= PLANT MAPPING =================
@@ -1517,7 +1563,7 @@ async function submitPlant(row){
     closeModal();
     toast(row ? 'Plant updated' : 'Plant added', 'success');
     await refreshSome(['plants']);
-  }catch(e){ toast('Failed: ' + e.message, 'error'); }
+  }catch(e){ saveErrorToast('Failed: ', e); }
 }
 
 // ================= NEEDS REVIEW =================
@@ -1621,7 +1667,7 @@ async function changeDeratedDate(newDateStr){
     toast('Date updated', 'success');
     render();
   }catch(e){
-    toast('Failed to update date: ' + e.message, 'error');
+    saveErrorToast('Failed to update date: ', e);
   }finally{
     showLoading(false);
   }
@@ -1657,7 +1703,7 @@ async function deleteReviewItem(row){
     await apiPost('deleteReview', { reviewRow: row, expect: reviewIdentity(item) });
     toast('Removed from Needs Review', 'success');
     await refreshSome(['review']);
-  }catch(e){ toast('Delete failed: ' + e.message, 'error'); }
+  }catch(e){ saveErrorToast('Delete failed: ', e); }
 }
 async function openResolve(row){
   await Promise.all([ensurePlantsLoaded(), ensureTechnologyLoaded()]);
@@ -1839,7 +1885,7 @@ async function submitResolve(row){
     else if(deletedStaleCount) msg = `Resolved · replaced ${deletedStaleCount} stale Ongoing entr${deletedStaleCount===1?'y':'ies'}`;
     toast(msg, 'success');
     await refreshSome(plantAdded ? ['outages', 'review', 'plants'] : ['outages', 'review']);
-  }catch(e){ toast('Failed: ' + e.message, 'error'); }
+  }catch(e){ saveErrorToast('Failed: ', e); }
 }
 
 // ---------- helpers ----------
