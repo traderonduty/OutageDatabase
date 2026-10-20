@@ -125,6 +125,13 @@
   .btn.primary{ background:var(--amber); color:#1A1204; border-color:var(--amber); }
   .btn.primary:hover{ filter:brightness(1.08); }
   .btn.ghost{ border-color:transparent; color:var(--muted); }
+  .btn:disabled, .trash-btn:disabled{ cursor:default; opacity:.55; pointer-events:none; }
+  .btn.busy{ opacity:.85; display:inline-flex; align-items:center; gap:8px; }
+  .btn-spinner{
+    width:12px; height:12px; border-radius:50%; flex:none;
+    border:2px solid currentColor; border-right-color:transparent;
+    animation:spin .7s linear infinite;
+  }
   .btn.ghost:hover{ color:var(--text); }
   .btn.edit-btn:hover{ background:rgba(217,164,65,.14); border-color:rgba(217,164,65,.5); color:var(--amber); }
   .btn.danger{ color:var(--red); }
@@ -289,7 +296,7 @@
   .stale-notice.show{ display:block; }
   .stale-notice.error{ color:var(--red); background:rgba(196,99,74,.1); border-color:rgba(196,99,74,.45); }
   body.stale-data [onclick^="openAdd"], body.stale-data [onclick^="openResolve"],
-  body.stale-data [onclick^="deleteReviewItem"], body.stale-data #runBuilderBtn,
+  body.stale-data [onclick*="deleteReviewItem"], body.stale-data #runBuilderBtn,
   body.stale-data #deratedDatePicker{ opacity:.4; pointer-events:none; }
   .loading-bar{
     position:fixed; top:0; left:0; width:100%; height:2px; overflow:hidden;
@@ -475,7 +482,7 @@ function openUrlModal(){
     <div class="field"><input id="urlInput" placeholder="https://script.google.com/macros/s/.../exec" value="${WEBAPP_URL}"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" onclick="connectUrl()">Connect</button>
+      <button class="btn primary" onclick="runBusy(this, connectUrl)">Connect</button>
     </div>`;
   $('#overlay').classList.add('show');
 }
@@ -643,6 +650,30 @@ function manualRefresh(){
   btn.classList.add('spinning');
   setTimeout(()=> btn.classList.remove('spinning'), 600);
   refreshAll();
+}
+
+// Disables a button (and the other buttons beside it in a modal) while
+// its action runs, and shows a spinner, so it can't be submitted twice.
+// Everything is restored afterwards if the button is still on screen —
+// e.g. a validation message or a cancelled confirm leaves the modal open.
+async function runBusy(btn, fn){
+  if(!btn || btn.disabled) return;
+  const group = btn.closest('.modal-actions');
+  const siblings = group ? [...group.querySelectorAll('button')] : [btn];
+  const original = btn.innerHTML;
+  siblings.forEach(b => b.disabled = true);
+  btn.classList.add('busy');
+  if(!btn.classList.contains('trash-btn')) btn.innerHTML = `<span class="btn-spinner"></span>${original}`;
+  else btn.innerHTML = '<span class="btn-spinner"></span>';
+  try{
+    await fn();
+  }finally{
+    if(btn.isConnected){
+      btn.innerHTML = original;
+      btn.classList.remove('busy');
+      siblings.forEach(b => b.disabled = false);
+    }
+  }
 }
 
 async function runBuilder(){
@@ -1232,7 +1263,7 @@ async function openAddOutage(row){
     <div class="field"><label>SO Advisory / notes</label><textarea id="f_soAdvisory" placeholder="Manually entered">${esc(existing?.soAdvisory||'')}</textarea></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" onclick="submitOutage(${row||'null'})">${existing?'Save changes':'Add record'}</button>
+      <button class="btn primary" onclick="runBusy(this, () => submitOutage(${row||'null'}))">${existing?'Save changes':'Add record'}</button>
     </div>`;
   $('#overlay').classList.add('show');
 }
@@ -1450,7 +1481,7 @@ async function openAddPlant(row){
     </div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" onclick="submitPlant(${row||'null'})">${existing ? 'Save changes' : 'Add plant'}</button>
+      <button class="btn primary" onclick="runBusy(this, () => submitPlant(${row||'null'}))">${existing ? 'Save changes' : 'Add plant'}</button>
     </div>`;
   $('#overlay').classList.add('show');
 }
@@ -1528,7 +1559,7 @@ function renderReview(){
       <td class="msg-cell"><span class="badge review">flagged</span> <span class="reason-tip" data-tip="${esc(r.reason)}">${esc(shortReason(r.reason))}</span></td>
       <td class="review-actions"><div class="review-actions-inner">
         <button class="btn resolve-btn" onclick="openResolve(${r.row})">Resolve</button>
-        <button class="trash-btn" title="Delete this item" onclick="deleteReviewItem(${r.row})">
+        <button class="trash-btn" title="Delete this item" onclick="runBusy(this, () => deleteReviewItem(${r.row}))">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
       </button>
       </div></td>
@@ -1673,7 +1704,7 @@ async function openResolve(row){
     </div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" onclick="submitResolve(${row})">Resolve</button>
+      <button class="btn primary" onclick="runBusy(this, () => submitResolve(${row}))">Resolve</button>
     </div>`;
   $('#overlay').classList.add('show');
 }
