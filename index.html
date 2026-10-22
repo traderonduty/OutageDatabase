@@ -221,6 +221,7 @@
   .toolbar .date-range .date-input-wrap{ width:auto; }
   .toolbar .date-range input[type="date"]{ flex:none; max-width:none; width:150px; }
   .toolbar-copy-btn{ margin-left:16px; padding:7px 14px; white-space:nowrap; }
+  .toolbar-capeg-btn{ padding:7px 14px; white-space:nowrap; }
   .date-range-clear{
     background:none; border:none; color:var(--muted); font-size:17px; line-height:1; cursor:pointer;
     width:24px; height:24px; border-radius:4px; display:none; align-items:center; justify-content:center;
@@ -416,6 +417,7 @@
       <span class="date-input-wrap"><input type="date" id="dateTo" title="To"><svg class="date-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></span>
       <button class="date-range-clear" id="dateRangeClear" title="Clear date range" onclick="clearDateRange()">×</button>
       <button class="btn primary toolbar-copy-btn" onclick="openResourceIdCopyModal()" title="Copy Resource ID and Outage Type for the rows currently shown">Copy Outage</button>
+      <button class="btn resolve-btn toolbar-capeg-btn" id="copyCapegBtn" onclick="copyCapeg(this)" title="Copy CAPEG_Data columns A–E from row 3 down (no header)">Copy CAPEG</button>
     </div>
   </div>
   <div class="content" id="content">
@@ -719,6 +721,61 @@ async function runBusy(btn, fn){
       btn.classList.remove('busy');
       siblings.forEach(b => b.disabled = false);
     }
+  }
+}
+
+// ---------- Copy CAPEG ----------
+// Pulled fresh from CAPEG_Data on click (it's an IMPORTRANGE that updates
+// daily). Browsers only allow copying right after a click, so the fetch
+// is handed to the clipboard as a pending item; if this browser can't do
+// that, the data is fetched and the button asks for one more click.
+let capegCache = null; // { text, count, at }
+async function fetchCapeg(){
+  const rows = await apiGet('getCapeg');
+  capegCache = { text: rows.map(r => r.join('\t')).join('\n'), count: rows.length, at: Date.now() };
+  return capegCache;
+}
+function writeClipboardText(text){
+  if(navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+  return new Promise(res => fallbackCopy(text, res));
+}
+async function copyCapeg(btn){
+  if(btn.disabled) return;
+  const label = 'Copy CAPEG';
+  const fresh = capegCache && Date.now() - capegCache.at < 120000;
+  btn.disabled = true;
+  btn.classList.add('busy');
+  btn.innerHTML = `<span class="btn-spinner"></span>${label}`;
+  let ok = false;
+  try{
+    if(fresh){
+      await writeClipboardText(capegCache.text);
+    }else if(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write){
+      const blob = fetchCapeg().then(c => new Blob([c.text], { type:'text/plain' }));
+      await navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+    }else{
+      await fetchCapeg();
+      await writeClipboardText(capegCache.text);
+    }
+    ok = true;
+  }catch(e){
+    if(capegCache && Date.now() - capegCache.at < 120000){
+      toast('CAPEG data loaded — click Copy CAPEG again to copy it', 'success');
+    }else{
+      toast(/Unknown action/i.test(e.message)
+        ? 'Copy CAPEG needs the updated Apps Script — deploy a new version of WebApp.gs first'
+        : 'Could not copy CAPEG: ' + e.message, 'error', /Unknown action/i.test(e.message) ? 8000 : undefined);
+    }
+  }finally{
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    btn.innerHTML = label;
+  }
+  if(ok){
+    if(!capegCache.count){ toast('CAPEG_Data has no rows from row 3 down', 'error'); return; }
+    btn.textContent = '✓ Copied';
+    toast(`Copied ${capegCache.count} CAPEG rows`, 'success');
+    setTimeout(() => { if(!btn.disabled) btn.textContent = label; }, 1500);
   }
 }
 
