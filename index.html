@@ -90,6 +90,11 @@
     color:var(--muted); font-size:11px; text-decoration:none; transition:border-color .15s ease, color .15s ease;
   }
   .ext-links a:hover{ border-color:var(--amber); color:var(--amber); }
+  .ext-links a.ext-amber{
+    background:rgba(217,164,65,.12); border-color:rgba(217,164,65,.4); color:var(--amber); font-weight:600;
+    transition:background .15s ease, border-color .15s ease;
+  }
+  .ext-links a.ext-amber:hover{ background:rgba(217,164,65,.2); border-color:rgba(217,164,65,.4); }
   .pagination{ display:flex; align-items:center; justify-content:center; gap:14px; padding:16px; }
   .page-indicator{ font-size:12px; color:var(--muted); }
   .ongoing-days{ font-size:10px; color:var(--muted); margin-left:5px; }
@@ -385,7 +390,7 @@
     <button data-view="derated">Derated Plants</button>
   </div>
   <div class="ext-links">
-    <a href="https://colab.research.google.com/drive/1Vb_CQyJVTuTZlruI3bEGTvfl5zhVy6p2" target="_blank" rel="noopener">SO Extractor</a>
+    <a class="ext-amber" href="https://colab.research.google.com/drive/1Vb_CQyJVTuTZlruI3bEGTvfl5zhVy6p2" target="_blank" rel="noopener">SO Extractor</a>
     <a href="https://docs.google.com/spreadsheets/d/1g9ov9yH4QARlaqeSw2WrK7QWuxXSzBYzIVNXsCDlMpU/edit?usp=sharing" target="_blank" rel="noopener">DB Sheets</a>
   </div>
   <div class="conn" id="connStatus">
